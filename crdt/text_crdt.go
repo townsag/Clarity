@@ -207,3 +207,21 @@ func (crdt *TextCRDT) findNodeByID(nodeID ID) (node *Node, err error) {
 	}
 	return node, err
 }
+
+func (crdt *TextCRDT) Representation() (values []interface{}) {
+	var inOrderTraversalHelper func(*Node)
+	inOrderTraversalHelper = func(currentNode *Node) {
+		for _, leftChild := range currentNode.leftChildren {
+			inOrderTraversalHelper(leftChild)
+		}
+		if currentNode.value != nil {
+			values = append(values, currentNode.value)
+		}
+		for _, rightChild := range currentNode.rightChildren {
+			inOrderTraversalHelper(rightChild)
+		}
+		return
+	}
+	inOrderTraversalHelper(crdt.root)
+	return values
+}
