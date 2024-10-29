@@ -220,7 +220,6 @@ func (crdt *TextCRDT) Representation() (values []interface{}) {
 		for _, rightChild := range currentNode.rightChildren {
 			inOrderTraversalHelper(rightChild)
 		}
-		return
 	}
 	inOrderTraversalHelper(crdt.root)
 	return values
