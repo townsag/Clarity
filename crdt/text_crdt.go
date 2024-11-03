@@ -14,7 +14,7 @@ func NewTextCRDT(replicaID string) *TextCRDT {
 	return &TextCRDT{
 		replicaID: replicaID,
 		root: NewNode(
-			ID{replicaID: replicaID, operationOffset: 0},
+			ID{replicaID: "root", operationOffset: 0},
 			nil,
 		),
 		versionVector: NewVersionVector(replicaID),
