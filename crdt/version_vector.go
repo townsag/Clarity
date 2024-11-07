@@ -17,6 +17,26 @@ func NewVersionVector(replicaID string) *VersionVector {
 	return v
 }
 
+func (original *VersionVector) Copy() *VersionVector {
+	copy := &VersionVector{
+		counters: make(map[string]int64),
+	}
+	for replicaID, counter := range original.counters {
+		copy.counters[replicaID] = counter
+	}
+	return copy
+}
+
+func (first *VersionVector) lessOrEqual(second *VersionVector) bool {
+	for replicaID, counter1 := range first.counters {
+		counter2, ok := second.counters[replicaID]
+		if !ok || !(counter1 <= counter2) {
+			return false
+		}
+	}
+	return true
+}
+
 func (v *VersionVector) ContainsReplicaID(replicaID string) bool {
 	_, ok := v.counters[replicaID]
 	return ok
@@ -28,6 +48,14 @@ func (v *VersionVector) RegisterReplica(replicaID string) error {
 	}
 	v.counters[replicaID] = 0
 	return nil
+}
+
+func (v *VersionVector) IsDuplicateOperation(replicaID string, operationOffset int64) bool {
+	localCounter, ok := v.counters[replicaID]
+	if !ok || localCounter < operationOffset {
+		return false
+	}
+	return true
 }
 
 func (v *VersionVector) IsValidOperation(replicaID string, operationOffset int64) bool {

@@ -8,6 +8,8 @@ type TextCRDT struct {
 	replicaID 		string
 	root 			*Node
 	versionVector	*VersionVector
+	// nodeByID		map[ID]*Node
+	// buffer		*map[string][]*Operation
 }
 
 func NewTextCRDT(replicaID string) *TextCRDT {
@@ -21,19 +23,135 @@ func NewTextCRDT(replicaID string) *TextCRDT {
 	}
 }
 
+/* 
+Todo:
+	- architecture changes:
+		- crdt object should have a has-a relationship with the TextCRDT state
+		- should be responsible for managing queues of operations
+	- need to be able to serialize and deserialize the crdt
+		- answer the question: "what does this look like when we write it to a database"
+		- options:
+			- write the crdt tree to json string, store the json string as a record in 
+			a nosql database 
+			- 
+	- need to better handle version of the operation in the apply function
+		- two different types of version rules
+			- we need to decide what makes an operation "valid"
+			- background:
+				- the version vector of the crdt represents the most recent operation that the crdt has
+				seen from each replica
+				- the version vector of an operation holds the offset of that operation on the replica from
+				which it originated as well as the version of that replica at the time of the operation
+				- version vectors can be:
+					- equal:
+						- VT1 = VT2 iff VT1[i] = VT2[i] ∀ i = 1, ..., N
+					- less than or equal to
+						- VT1 ≤ VT2 iff VT1[i] ≤ VT2[i] ∀ i = 1, ..., N
+						- replica 2 has seen all of the same operations that replica 1 has seen and maybe more
+					- happened before:
+						- VT1 → VT2 iff VT1[i] ≤ VT2[i] ∀ i = 1, ..., N && ∃ j | 1 ≤ j ≤ N & VT1[j] < VT2[j]
+						- the operation offset of the most recent operation for each replicaID in vector 
+						timestamp one is less than or equal to the operation offset of the most recent 
+						operation for each replicaID in vector timestamp 2. Also there is at least one operation
+						offset in vector timestamp two that is greater than the respective offset in vector one 
+						- replica 2 has seen all of the operations that replica 1 has seen and at least one more 
+						operation
+					- concurrent:
+						- VT1 ||| VT2 iff NOT(VT1 ≤ VT2) AND NOT(VT2 ≤ VT1)
+						- two events are concurrent if the version vector from the first is not less than the second
+						and vice versa
+						- two replicas can have concurrent edits if each replica has operations that are at a higher
+						offset than the operations seen for that respective replica offset on the other replica
+					- adjacent/consecutive
+						- VT1 |→| VT2 iff VT1[i] ≤ VT2[i] ∀ i | i ∈ [1, N] - [j] && ∃ j | 1 ≤ j ≤ N & VT1[j] + 1 = VT2[j]
+						- special case of casually related / happens before that also specifies that it is the
+						next operation
+						- this is not what we are looking for though, we want to apply an operation with version
+						vector VT2 when all but one of the offsets are less than or equal to the offsets in VT1,
+						the version vector for the local crdt
+					
+			- strong causal ordering:
+				- only apply operations to local CRDT state when the local CRDT is up to date with all the
+				operations with a "happened before" relationship to the operation to be applied
+					- it may be easier to think of an operation as having a vector timestamp representing the
+					operations that operation is dependent on. Then we can use the causal ordering / happened 
+					before relationship to determine if it is safe to apply an operation. The happens before
+					relationship is very well defined
+					- given a local crdt with vector timestamp VT1 and an operation that occurred at a timestamp of 
+					VT2 on it's crdt replica, only apply the operation if:
+						- VT2[i] ≤ VT1[i] ∀ i | i ≠ replicaID of the operation
+						- VT2[j] = VT1[j] + 1 where j = replicaID of the operation
+					- **it is not clear to me if this will cause deadlock**
+						- What is a situation that would cause deadlock?
+						- there are three replicas. Replica1 and Replica2 both have operations that Replica3 needs
+						to apply to it's local state
+						- try proof by contradiction?
+					- can I prove that there will always be one valid operation if all the operations have
+					been received
+						- can I prove that there is no scenario in which there is a circular wait
+					- this approach is **not** robust to network partitions
+				- means that the crdt can only apply operations when the crdt has seen the operations that 
+				the replica that originally made that operation had seen
+				- what does the class api look like? How do I tell the client which operations are missing?
+					- is this just using the local version vector
+			- weak causal ordering
+				- only apply operations to local CRDT state when the node that operation depends on is
+				present and the previous operation from that replica has been applied
+					- origin node for insert
+					- current node for delete
+				- each operation has to store:
+					- parent node id
+					- current node id
+				- this is faster but could result in less meaningful inserts
+		- options:
+			- crdt throws an error when the client tries to perform an operation that is
+			more than one offset higher than the current offset of that replica id
+				- this would require that the client maintains a queue of pending operations
+				and tries them periodically
+			- crdt accepts operations but only applies valid operations. maintains an internal
+			queue of pending operations
+				- might have to write some getters that tell the client what the state of pending
+				operations is
+		- also, the version of an operation might also need to take into account the version
+		of edits from other replicas. look further into version requirements
+*/
+
+/*
+Design choice:
+	- write an receive and an apply function:
+		- receive is responsible for receiving a stream of operations and determining if 
+		the crdt is ready to apply any of the received operations based on the version
+		vector of the operations dependencies and the version vector of the local crdt state
+			- maintain a queue of pending operations that have been received but not applied 
+		- apply is responsible for updating the local crdt state
+*/
 
 // Design Choice:
 //	- write two different insert functions
 //		- one for receiving an operation from another replica and applying that operation
 //		- one for inserting values originating at this replica
 // TODO: test that this handles the case where there is no right origin
-func (crdt *TextCRDT) Apply(operation Operation) {
+func (crdt *TextCRDT) Apply(operation Operation) error {
+	// check to see if the operation already exists
+	operationID := operation.GetOperationID()
+	if crdt.versionVector.IsDuplicateOperation(operationID.replicaID, operationID.operationOffset) {
+		return nil
+	}
+	// check that the local crdt has seen the dependent operations of the current operation
+	operationDependencies := operation.GetDependencies()
+	if !operationDependencies.lessOrEqual(crdt.versionVector) {
+		return fmt.Errorf(
+			"tried to apply operation with version vector: \n%v\n to replica with version vector:\n%v",
+			*operationDependencies,
+			*crdt.versionVector,
+		)
+	}
 	switch operation.Type() {
 	case Insert:
 		insertOp := operation.(*InsertOperation)
 		parentNode, err := crdt.findNodeByID(insertOp.parentNodeID)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		switch insertOp.side{
 		case left:
@@ -45,11 +163,17 @@ func (crdt *TextCRDT) Apply(operation Operation) {
 		deleteOp := operation.(*DeleteOperation)
 		toDelete, err := crdt.findNodeByID(deleteOp.currentNodeID)
 		if err != nil {
-			panic(err)
+			return err
 		}
-		// TODO: we should be checking here if the value has already been deleted, so something with the error
 		toDelete.value = nil
+
 	}
+	// update the version vector of the crdt to reflect recent change
+	err := crdt.versionVector.UpdateOperation(operationID.replicaID, operationID.operationOffset)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (crdt *TextCRDT) LocalInsert(index int64, value interface{}) (*InsertOperation) {
@@ -58,6 +182,9 @@ func (crdt *TextCRDT) LocalInsert(index int64, value interface{}) (*InsertOperat
 	var newOperationOffset int64
 	var parentNodeID ID
 	var side side
+	// for user experience purposes an operation is dependent on all operations that
+	// have a happened before relationship with it
+	var dependencies *VersionVector = crdt.versionVector.Copy()
 	leftOrigin, rightOrigin, err = crdt.findOriginsHelper(index)
 	if err != nil {
 		panic(err)
@@ -82,16 +209,19 @@ func (crdt *TextCRDT) LocalInsert(index int64, value interface{}) (*InsertOperat
 		parentNodeID = rightOrigin.nodeID
 	}
 	newNodeID := ID{replicaID: crdt.replicaID, operationOffset: newOperationOffset}
-	return NewInsertOperation(newNodeID, value, parentNodeID, side)	
+	return NewInsertOperation(newNodeID, value, dependencies, parentNodeID, side)	
 }
 
 func (crdt *TextCRDT) LocalDelete(index int64) (*DeleteOperation) {
+	var dependencies *VersionVector = crdt.versionVector.Copy()
 	nodeToDelete, err := crdt.findNodeByIndex(index)
 	if err != nil {
 		panic(err)
 	}
 	nodeToDelete.value = nil
-	return NewDeleteOperation(nodeToDelete.nodeID)
+	newOperationOffset, _ := crdt.versionVector.IncrementVersion(crdt.replicaID)
+	var operationID ID = ID{replicaID: crdt.replicaID, operationOffset: newOperationOffset}
+	return NewDeleteOperation(nodeToDelete.nodeID, operationID, dependencies)
 }
 
 // use helper function and closure to implement find origins
