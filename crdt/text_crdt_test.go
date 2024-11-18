@@ -79,7 +79,7 @@ func TestInsertMultiUserForward(t *testing.T) {
 	
 	// apply changes made by first user to second users 
 	for _, operation := range operations1 {
-		crdt2.Apply(operation)
+		crdt2.Recieve(operation)
 	}
 
 	//second user inserts "apple, banana"
@@ -91,7 +91,7 @@ func TestInsertMultiUserForward(t *testing.T) {
 
 	// apply changes made by the second user to the first user
 	for _, operation := range operations2 {
-		crdt1.Apply(operation)
+		crdt1.Recieve(operation)
 	}
 
 	// test that the representation of both CRDTs is correct and equivalent
@@ -111,6 +111,42 @@ func TestInsertMultiUserForward(t *testing.T) {
     }
 }
 
+func TestInsertMultiUserForwardOutOfOrder(t *testing.T) {
+	var want string = "Grocery List: apple, banana"
+	var crdt1 *TextCRDT = NewTextCRDT("replica1")
+	var crdt2 *TextCRDT = NewTextCRDT("replica2")
+
+	// first user inserts "Grocery List: "
+	var operations1 []Operation = make([]Operation, 0)
+	for index, value := range "Grocery List: " {
+		newOperation := crdt1.LocalInsert(int64(index), rune(value))
+		operations1 = append(operations1, newOperation)
+	}
+
+	// first user inserts "apple, banana"
+	var operations2 []Operation = make([]Operation, 0)
+	for index, value := range "apple, banana" {
+		newOperaion := crdt1.LocalInsert(int64(len("Grocery List: ") + index), rune(value))
+		operations2 = append(operations2, newOperaion)
+	}
+
+	// apply changes made by first user to second users but out of order
+	for _, operation := range operations2 {
+		crdt2.Recieve(operation)
+	}
+
+	for _, operation := range operations1 {
+		crdt2.Recieve(operation)
+	}
+	representation2, err := representationToString(crdt2.Representation())
+    if err != nil {
+        panic(err)
+    }
+	if representation2 != want {
+        t.Errorf("representation of crdt2 does not match want\nrep2: %s\nwan: %s", representation2, want)
+    }
+}
+
 func TestInsertDeleteForwardsMultiUser(t *testing.T) {
 	var want string = "Grocery List: apple, banana"
 	var crdt1 *TextCRDT = NewTextCRDT("replica1")
@@ -124,7 +160,7 @@ func TestInsertDeleteForwardsMultiUser(t *testing.T) {
 
 	// second user is updated with first users inserts
 	for _, operation := range operations1 {
-		crdt2.Apply(operation)
+		crdt2.Recieve(operation)
 	}
 
 	// second user adds "apple, banana, grapefruit" to the list
@@ -135,7 +171,7 @@ func TestInsertDeleteForwardsMultiUser(t *testing.T) {
 
 	// first user is updated with second users inserts
 	for _, operation := range operations2 {
-		crdt1.Apply(operation)
+		crdt1.Recieve(operation)
 	}
 
 	// first user deletes ", grapefruit"
@@ -145,14 +181,14 @@ func TestInsertDeleteForwardsMultiUser(t *testing.T) {
 		// the crdt string representation is zero indexed. We want to forward starting from the "," after
 		// banana to the end of the string. The index of the comma is equal to the length of the substring 
 		// minus one
-		temp, _ := representationToString(crdt1.Representation())
-		fmt.Printf("this is rep in delete loop: %v\n", temp)
+		// temp, _ := representationToString(crdt1.Representation())
+		// fmt.Printf("this is rep in delete loop: %v\n", temp)
 		operations1 = append(operations1, newOperation)
 	}
 	
 	// apply the deletes to the the second crdt
 	for _, operation := range operations1 {
-		crdt2.Apply(operation)
+		crdt2.Recieve(operation)
 	}
 
 	// verify that the crdt representations are correct and equivalent
@@ -172,10 +208,10 @@ func TestInsertDeleteForwardsMultiUser(t *testing.T) {
     }
 }
 
-func TestConcurrentInsert(t *testing.T) {
+// func TestConcurrentInsert(t *testing.T) {
 	
-}
+// }
 
-func TestConcurrentInsertReverse(t *testing.T) {
+// func TestConcurrentInsertReverse(t *testing.T) {
 
-}
+// }

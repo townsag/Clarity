@@ -2,6 +2,7 @@ package crdt
 
 import (
 	"fmt"
+    "sort"
 )
 
 type TextCRDT struct {
@@ -9,10 +10,11 @@ type TextCRDT struct {
 	root 			*Node
 	versionVector	*VersionVector
 	// nodeByID		map[ID]*Node
-	// buffer		*map[string][]*Operation
+	buffer		    map[string][]Operation
 }
 
 func NewTextCRDT(replicaID string) *TextCRDT {
+    newBuffer := make(map[string][]Operation)
 	return &TextCRDT{
 		replicaID: replicaID,
 		root: NewNode(
@@ -20,6 +22,7 @@ func NewTextCRDT(replicaID string) *TextCRDT {
 			nil,
 		),
 		versionVector: NewVersionVector(replicaID),
+        buffer: newBuffer,
 	}
 }
 
@@ -125,16 +128,77 @@ Design choice:
 			- maintain a queue of pending operations that have been received but not applied 
 		- apply is responsible for updating the local crdt state
 */
+func (crdt *TextCRDT) Recieve(operation Operation) error {
+    var operationID ID = operation.GetOperationID()
+    // check if the version vector already contains this opperation
+    if crdt.versionVector.IsDuplicateOperation(operationID) {
+        return nil
+    }
+    // add the operation to the relevant queue
+    queue, ok := crdt.buffer[operationID.replicaID]
+    if !ok {
+        // this is the case in which a queue does not exist for that replica id
+        if !crdt.versionVector.ContainsReplicaID(operationID.replicaID) {
+            crdt.versionVector.RegisterReplica(operationID.replicaID)
+        }
+        crdt.buffer[operationID.replicaID] = []Operation{operation}
+    } else {
+        // this is the case in which a queue does exist for that replica
+        // find the index which we need to insert this operation
+        i := sort.Search(len(queue), func(i int) bool {
+            // false for the prefix of the array that is less than the value to be inserted
+            // true for the part of the array that is greater than the value to be inserted
+            return queue[i].GetOperationID().operationOffset > operationID.operationOffset
+        })
+        // insert the new operation into the queue
+        crdt.buffer[operationID.replicaID] = append(
+            crdt.buffer[operationID.replicaID][:i],
+            append([]Operation{operation}, crdt.buffer[operationID.replicaID][i:]...)...,
+        )
+    }
+    return crdt.poll()
+}
+
+/*
+Assumptions:
+- there are no duplicate operations in the queue
+    - all the operations in the queue have not been applied yet
+    - there is only one copy of each operation in the queue
+*/
+func (crdt *TextCRDT) poll() error {
+    for replicaID, queue := range crdt.buffer {
+        // queue is a queue of operations that is sorted by operation offset
+        // poll from the same queue until we find a nonvalid operation or the queue is empty
+        // then move on to the next queue
+        for len(queue) > 0 {
+            // check if the operation at the head of the queue is valid:
+            //  - check that the dependencies of the operation have been met
+            operationDependencies := queue[0].GetDependencies()
+            operationID := queue[0].GetOperationID()
+            if operationDependencies.lessOrEqual(crdt.versionVector) && crdt.versionVector.IsValidOperation(operationID) {
+                // pop the operation from the queue 
+                toApply := queue[0]
+                queue = queue[1:]
+                crdt.apply(toApply)
+            } else {
+                // found a non-valid operation, stop processing this queue
+                break
+            }
+        }
+        crdt.buffer[replicaID] = queue
+    }
+    return nil
+}
 
 // Design Choice:
 //	- write two different insert functions
 //		- one for receiving an operation from another replica and applying that operation
 //		- one for inserting values originating at this replica
 // TODO: test that this handles the case where there is no right origin
-func (crdt *TextCRDT) Apply(operation Operation) error {
+func (crdt *TextCRDT) apply(operation Operation) error {
 	// check to see if the operation already exists
 	operationID := operation.GetOperationID()
-	if crdt.versionVector.IsDuplicateOperation(operationID.replicaID, operationID.operationOffset) {
+	if crdt.versionVector.IsDuplicateOperation(operationID) {
 		return nil
 	}
 	// check that the local crdt has seen the dependent operations of the current operation
@@ -169,7 +233,7 @@ func (crdt *TextCRDT) Apply(operation Operation) error {
 
 	}
 	// update the version vector of the crdt to reflect recent change
-	err := crdt.versionVector.UpdateOperation(operationID.replicaID, operationID.operationOffset)
+	err := crdt.versionVector.UpdateOperation(operationID)
 	if err != nil {
 		return err
 	}
