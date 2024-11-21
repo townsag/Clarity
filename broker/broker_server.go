@@ -93,7 +93,7 @@ func (s ServerState) String() string {
 //		maintain consistency with leader
 //		maintain timeout to elect new leader of leader is dead (no heartbeat)
 //
-// gossip to detect FOLLOWER node failures
+
 func (broker *BrokerServer) Serve() {
 
 	broker.mu.Lock()
