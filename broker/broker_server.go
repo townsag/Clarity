@@ -1,8 +1,9 @@
 package broker
 
+// gonna move a bunch of shit to the consensus.go file
+
 import (
 	"log"
-	"math/rand"
 	"net"
 	"net/rpc"
 	"sync"
@@ -53,32 +54,6 @@ func NewBrokerServer(brokerid int, peerIds []int, state ServerState, ready <-cha
 	return broker
 }
 
-type ServerState int
-
-const (
-	Follower  ServerState = 0
-	Candidate ServerState = 1
-	Leader    ServerState = 2
-	Dead      ServerState = 3
-)
-
-// converts CMState values into strings
-// for debugging and terminal prints
-func (s ServerState) String() string {
-	switch s {
-	case Follower:
-		return "Follower"
-	case Candidate:
-		return "Candidate"
-	case Leader:
-		return "Leader"
-	case Dead:
-		return "Dead"
-	default:
-		panic("unreachable")
-	}
-}
-
 // Broker Server's main routine
 // each broker must:
 //
@@ -121,50 +96,7 @@ func (broker *BrokerServer) Serve() {
 		}
 	}()
 
-	// start election timer
-	broker.resetElectionTimer()
-
 	// if follower gets a log update. reject? then app server should resend to leader
-}
-
-// set randomized timeout when called
-// or start election when timeout runs out
-func (broker *BrokerServer) resetElectionTimer() {
-	if broker.electionTimer != nil {
-		broker.electionTimer.Stop()
-	}
-
-	timeout := time.Duration(150+rand.Intn(150)) * time.Millisecond
-	broker.electionTimer = time.NewTimer(timeout)
-
-	// start election when timer runs out
-	go func() {
-		<-broker.electionTimer.C
-		broker.startElection()
-	}()
-}
-
-// election algorithm
-func (broker *BrokerServer) startElection() {
-
-	broker.mu.Lock()
-	broker.state = Candidate
-	broker.term++
-	savedCurrentTerm := broker.term
-
-	// server votes for itself
-	//votes := 1
-	log.Printf("becomes Candidate (currentTerm=%d)", savedCurrentTerm)
-	broker.mu.Unlock()
-
-	// send vote request rpc to all peers
-	for _, peerId := range broker.peerIds {
-		go func(peerId int) {
-			// need log index so need logs to work first
-			return
-		}(peerId)
-	}
-
 }
 
 // func main() {
