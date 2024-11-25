@@ -4,7 +4,7 @@ package broker
 // basically all it is is the leader sends heartbeats to followers.
 // if a follower doesn't detect a heartbeat by timeout, start leader election
 
-// assumed to rely on a ReplicationModule (rm). can get log ids through something like  broker.rm.logindex
+// assumed to rely on a ReplicationModule (rm). can get log idx through something like  len(broker.rm.log)
 
 import (
 	"math/rand"

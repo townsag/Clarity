@@ -1,5 +1,6 @@
 // this basically copies from hashicorp githib
 // want to seperate election from replication
+// this file will be deleted at the end
 
 package broker
 
@@ -35,13 +36,13 @@ import (
 // 	}
 // }
 
-type CommitEntry struct {
-	crdtOperation any
+// type CommitEntry struct {
+// 	crdtOperation any
 
-	Index int
+// 	Index int
 
-	Term int
-}
+// 	Term int
+// }
 
 type ConsensusModule struct {
 	// lock
@@ -170,17 +171,17 @@ func (cm *ConsensusModule) startElection() {
 
 }
 
-// helper function for leader election
-// returns last log entry index and term
-func (cm *ConsensusModule) lastLogIndexAndTerm() (int, int) {
-	if len(cm.log) > 0 {
-		lastIndex := len(cm.log) - 1
-		return lastIndex, cm.log[lastIndex].Term
-	} else {
-		// new server, no log
-		return -1, -1
-	}
-}
+// // helper function for leader election
+// // returns last log entry index and term
+// func (cm *ConsensusModule) lastLogIndexAndTerm() (int, int) {
+// 	if len(cm.log) > 0 {
+// 		lastIndex := len(cm.log) - 1
+// 		return lastIndex, cm.log[lastIndex].Term
+// 	} else {
+// 		// new server, no log
+// 		return -1, -1
+// 	}
+// }
 
 // watches newCommitReadyChan to see what entries can be commited
 func (cm *ConsensusModule) commitChanSender() {

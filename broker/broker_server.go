@@ -10,16 +10,20 @@ import (
 	"time"
 )
 
-type LogEntry struct {
-	Index int
-	Edit  any
-	Term  int
-}
+// type LogEntry struct {
+// 	Index int
+// 	Edit  any
+// 	Term  int
+// }
 
 type BrokerServer struct {
 	mu sync.Mutex
 
 	brokerid int
+
+	// initialize election and replication modules
+	em *ElectionModule
+	rm *ReplicationModule
 
 	peerIds     []int
 	peerClients map[int]*rpc.Client
