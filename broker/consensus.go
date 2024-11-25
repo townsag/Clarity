@@ -1,3 +1,6 @@
+// this basically copies from hashicorp githib
+// want to seperate election from replication
+
 package broker
 
 import (
@@ -6,31 +9,31 @@ import (
 	"time"
 )
 
-type ServerState int
+// type ServerState int
 
-const (
-	Follower  ServerState = 0
-	Candidate ServerState = 1
-	Leader    ServerState = 2
-	Dead      ServerState = 3
-)
+// const (
+// 	Follower  ServerState = 0
+// 	Candidate ServerState = 1
+// 	Leader    ServerState = 2
+// 	Dead      ServerState = 3
+// )
 
 // converts CMState values into strings
 // for debugging and terminal prints
-func (s ServerState) String() string {
-	switch s {
-	case Follower:
-		return "Follower"
-	case Candidate:
-		return "Candidate"
-	case Leader:
-		return "Leader"
-	case Dead:
-		return "Dead"
-	default:
-		panic("unreachable")
-	}
-}
+// func (s ServerState) String() string {
+// 	switch s {
+// 	case Follower:
+// 		return "Follower"
+// 	case Candidate:
+// 		return "Candidate"
+// 	case Leader:
+// 		return "Leader"
+// 	case Dead:
+// 		return "Dead"
+// 	default:
+// 		panic("unreachable")
+// 	}
+// }
 
 type CommitEntry struct {
 	crdtOperation any
@@ -140,6 +143,7 @@ func (cm *ConsensusModule) resetElectionTimer() {
 	go func() {
 		<-cm.electionTimer.C
 		cm.startElection()
+
 	}()
 }
 
