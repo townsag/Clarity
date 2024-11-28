@@ -25,7 +25,26 @@ type ReplicationModule struct {
 
 	broker *BrokerServer
 
+	// id of connected server
+	id int
+
+	peerIds []int
+
+	state ServerState
+
 	log []LogEntry
+}
+
+func NewRM(id int, peerIds []int, broker *BrokerServer, state ServerState) *ReplicationModule {
+
+	rm := new(ReplicationModule)
+
+	rm.broker = broker
+	rm.id = id
+	rm.peerIds = peerIds
+	rm.state = state
+
+	return rm
 }
 
 // rpc request from leader to follower

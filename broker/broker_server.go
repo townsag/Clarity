@@ -39,7 +39,14 @@ type BrokerServer struct {
 	// states unique to each server
 	state ServerState
 
+	// timer to keep track of heartbeat timeout from leader
 	electionTimer *time.Timer
+
+	// rpc proxy used in github to simulate failures
+	//rpcProxy *RPCProxy
+
+	// rpc server for handling actual requests
+	rpcServer *rpc.Server
 
 	// channel to ensure servers start together
 	ready <-chan any
@@ -76,6 +83,7 @@ func NewBrokerServer(brokerid int, peerIds []int, state ServerState, ready <-cha
 func (broker *BrokerServer) Serve() {
 
 	broker.mu.Lock()
+	broker.rm = NewRM(broker.brokerid, broker.peerIds, broker, broker.state)
 
 	var err error
 	broker.listener, err = net.Listen("tcp", ":0") // listen on any open port
@@ -95,7 +103,7 @@ func (broker *BrokerServer) Serve() {
 				continue
 			}
 			// go routine so that rpc is non blocking
-			go rpc.ServeConn(conn)
+			go broker.rpcServer.ServeConn(conn)
 
 		}
 	}()

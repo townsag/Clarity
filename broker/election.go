@@ -57,7 +57,7 @@ type ElectionModule struct {
 	electionTimer *time.Timer
 }
 
-func newEM(id int, peerIds []int, broker *BrokerServer, state ServerState, ready <-chan any) *ElectionModule {
+func NewEM(id int, peerIds []int, broker *BrokerServer, state ServerState, ready <-chan any) *ElectionModule {
 
 	em := new(ElectionModule)
 
