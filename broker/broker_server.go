@@ -16,8 +16,35 @@ import (
 // 	Term  int
 // }
 
+type ServerState int
+
+const (
+	Follower  ServerState = 0
+	Candidate ServerState = 1
+	Leader    ServerState = 2
+	Dead      ServerState = 3
+)
+
+func (s ServerState) String() string {
+	switch s {
+	case Follower:
+		return "Follower"
+	case Candidate:
+		return "Candidate"
+	case Leader:
+		return "Leader"
+	case Dead:
+		return "Dead"
+	default:
+		panic("unreachable")
+	}
+}
+
 type BrokerServer struct {
 	mu sync.Mutex
+
+	// lock for election and replication
+	mu2 sync.Mutex
 
 	brokerid int
 
@@ -83,7 +110,15 @@ func NewBrokerServer(brokerid int, peerIds []int, state ServerState, ready <-cha
 func (broker *BrokerServer) Serve() {
 
 	broker.mu.Lock()
-	broker.rm = NewRM(broker.brokerid, broker.peerIds, broker, broker.state)
+
+	// initialize election and replication modules for broker server
+	broker.em = NewEM(broker.brokerid, broker.peerIds, broker, broker.ready)
+	broker.rm = NewRM(broker.brokerid, broker.peerIds, broker)
+
+	// create new rpcServer and register with EM and RM
+	broker.rpcServer = rpc.NewServer()
+	broker.rpcServer.RegisterName("ElectionModule", broker.em)
+	broker.rpcServer.RegisterName("ReplicationModule", broker.rm)
 
 	var err error
 	broker.listener, err = net.Listen("tcp", ":0") // listen on any open port
