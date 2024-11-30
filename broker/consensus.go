@@ -96,6 +96,8 @@ func NewCM(id int, peerIds []int, broker *BrokerServer, state ServerState /*stor
 
 	cm.commitChan = commitChan
 
+	// channels are like temporary storage that will be consumed by some function
+
 	// 16 is buffer size. it means that 16 notifs can be held in channe;
 	cm.newCommitReadyChan = make(chan struct{}, 16)
 

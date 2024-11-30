@@ -3,6 +3,7 @@ package broker
 // gonna move a bunch of shit to the consensus.go file
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/rpc"
@@ -59,12 +60,14 @@ type BrokerServer struct {
 
 	// persistent state on all servers
 	// should be replicated across all brokers
-	term     int // what is the current term
+	//term     int // what is the current term
 	votedFor int // who this server voted for
 	log      []LogEntry
 
 	// states unique to each server
 	state ServerState
+
+	commitChan chan<- CommitEntry
 
 	// timer to keep track of heartbeat timeout from leader
 	electionTimer *time.Timer
@@ -113,7 +116,7 @@ func (broker *BrokerServer) Serve() {
 
 	// initialize election and replication modules for broker server
 	broker.em = NewEM(broker.brokerid, broker.peerIds, broker, broker.ready)
-	broker.rm = NewRM(broker.brokerid, broker.peerIds, broker)
+	broker.rm = NewRM(broker.brokerid, broker.peerIds, broker, broker.commitChan)
 
 	// create new rpcServer and register with EM and RM
 	broker.rpcServer = rpc.NewServer()
@@ -144,6 +147,18 @@ func (broker *BrokerServer) Serve() {
 	}()
 
 	// if follower gets a log update. reject? then app server should resend to leader
+}
+
+func (broker *BrokerServer) Call(id int, serviceMethod string, args any, reply any) error {
+	broker.mu.Lock()
+	peer := broker.peerClients[id]
+	broker.mu.Unlock()
+
+	if peer == nil {
+		return fmt.Errorf("call client %d after it's closed", id)
+	} else {
+		return peer.Call(serviceMethod, args, reply)
+	}
 }
 
 // somewhere in the server. handle rpc heartbeat and crdt log appends

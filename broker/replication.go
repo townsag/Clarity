@@ -31,9 +31,21 @@ type ReplicationModule struct {
 	log []LogEntry
 
 	commitIndex int
+
+	commitChan chan<- CommitEntry
+
+	// channel to coordiate commits
+	// added to in leaderSendAEs and AppendEntries
+	// consumed in commitChanSender
+	newCommitReadyChan chan struct{}
+
+	// AE stands for appendentry. used also for heartbeat
+	triggerAEChan chan struct{}
+
+	lastApplied int
 }
 
-func NewRM(id int, peerIds []int, broker *BrokerServer) *ReplicationModule {
+func NewRM(id int, peerIds []int, broker *BrokerServer, commitChan chan<- CommitEntry) *ReplicationModule {
 
 	rm := new(ReplicationModule)
 
@@ -41,6 +53,16 @@ func NewRM(id int, peerIds []int, broker *BrokerServer) *ReplicationModule {
 	rm.id = id
 	rm.peerIds = peerIds
 	rm.commitIndex = -1
+
+	rm.commitChan = commitChan
+
+	// channels are like temporary storage that will be consumed by some function
+
+	// 16 is buffer size. it means that 16 notifs can be held in channe;
+	rm.newCommitReadyChan = make(chan struct{}, 16)
+
+	// 1 ensures only 1 AppendEntry is pending
+	rm.triggerAEChan = make(chan struct{}, 1)
 
 	return rm
 }
@@ -123,8 +145,8 @@ func (rm *ReplicationModule) leaderSendAEs() {
 						// notify followers of commit
 						if rm.commitIndex != savedCommitIndex {
 							rm.broker.mu2.Unlock()
-							// cm.newCommitReadyChan <- struct{}{}
-							// cm.triggerAEChan <- struct{}{}
+							rm.newCommitReadyChan <- struct{}{}
+							rm.triggerAEChan <- struct{}{}
 						} else {
 							rm.broker.mu2.Unlock()
 						}
@@ -162,6 +184,29 @@ func (rm *ReplicationModule) leaderSendAEs() {
 
 }
 
+func (rm *ReplicationModule) commitChanSender() {
+	for range rm.newCommitReadyChan {
+		rm.broker.mu2.Lock()
+		savedTerm := rm.broker.em.term
+		savedLastApplied := rm.lastApplied
+
+		var entries []LogEntry
+		if rm.commitIndex > rm.lastApplied {
+			entries = rm.log[rm.lastApplied+1 : rm.commitIndex+1]
+			rm.lastApplied = rm.commitIndex
+		}
+		rm.broker.mu2.Unlock()
+
+		for i, entry := range entries {
+			rm.commitChan <- CommitEntry{
+				crdtOperation: entry.crdtOperation,
+				Index:         savedLastApplied + i + 1,
+				Term:          savedTerm,
+			}
+		}
+	}
+}
+
 // rpc request from leader to follower
 // handles both heartbeat and actual log entries
 type AppendEntriesArgs struct {
@@ -184,7 +229,77 @@ type AppendEntriesReply struct {
 	ConflictTerm  int
 }
 
+// this func is primarily for followers to accept replication from leader
 func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
 
+	rm.broker.mu2.Lock()
+	defer rm.broker.mu2.Unlock()
+
+	// if log entry to append has higher term. become follower
+	if args.Term > rm.broker.em.term {
+		rm.broker.em.becomeFollower(args.Term)
+	}
+
+	reply.Success = false
+
+	if args.Term == rm.broker.em.term {
+		if rm.broker.state != Follower {
+			rm.broker.em.becomeFollower(args.Term)
+		}
+		rm.broker.em.resetElectionTimer()
+
+		// check if follower log contains previous entry (correct term and index)
+		if args.PrevLogIndex == -1 || (args.PrevLogIndex < len(rm.log) && args.PrevLogIndex == rm.log[args.PrevLogIndex].Term) {
+			reply.Success = true
+
+			logInsertIndex := args.PrevLogIndex + 1
+			newEntriesIndex := 0
+
+			// loop through log entries sent from leader to see where to start inserting
+			for {
+				// end of follower log reached meaning log is either shorter and must be appended upon
+				// or follower log is up to date
+				if logInsertIndex >= len(rm.log) || newEntriesIndex >= len(args.Entries) {
+					break
+				}
+				// mismatch found, start appending from this index
+				if rm.log[logInsertIndex].Term != args.Entries[newEntriesIndex].Term {
+					break
+				}
+				logInsertIndex++
+				newEntriesIndex++
+			}
+
+			// append missing entries to follower log
+			if newEntriesIndex < len(args.Entries) {
+				rm.log = append(rm.log[:logInsertIndex], args.Entries[newEntriesIndex:]...)
+			}
+
+			if args.LeaderCommit > rm.commitIndex {
+				rm.commitIndex = min(args.LeaderCommit, len(rm.log)-1)
+				rm.newCommitReadyChan <- struct{}{}
+			}
+
+		} else {
+			if args.PrevLogIndex >= len(rm.log) {
+				reply.ConflictIndex = len(rm.log)
+				reply.ConflictTerm = -1
+			} else {
+				reply.ConflictTerm = rm.log[args.PrevLogIndex].Term
+
+				var i int
+				for i = args.PrevLogIndex - 1; i >= 0; i-- {
+					if rm.log[i].Term != reply.ConflictTerm {
+						break
+					}
+				}
+				reply.ConflictIndex = i + 1
+			}
+		}
+	}
+
+	reply.Term = rm.broker.em.term
+	// storage is for crashes. we will probably pull from db if we end up having enough time.
+	//rm.persistToStorage()
 	return nil
 }
