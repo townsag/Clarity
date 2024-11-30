@@ -60,7 +60,7 @@ func NewEM(id int, peerIds []int, broker *BrokerServer, ready <-chan any) *Elect
 }
 
 func (em *ElectionModule) resetElectionTimer() {
-
+	// maybe check if leader here?
 	// stop timer if there is still time left
 	if em.electionTimer != nil {
 		em.electionTimer.Stop()
@@ -134,10 +134,10 @@ func (em *ElectionModule) startElection() {
 
 			}
 
-			return
+			return // why is this here
 		}(peerId)
 	}
-
+	em.resetElectionTimer()
 }
 
 // set em to follower
