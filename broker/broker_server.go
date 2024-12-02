@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/rpc"
 	"sync"
-	"time"
 )
 
 // type LogEntry struct {
@@ -58,19 +57,10 @@ type BrokerServer struct {
 
 	listener net.Listener
 
-	// persistent state on all servers
-	// should be replicated across all brokers
-	//term     int // what is the current term
-	votedFor int // who this server voted for
-	log      []LogEntry
-
 	// states unique to each server
 	state ServerState
 
 	commitChan chan<- CommitEntry
-
-	// timer to keep track of heartbeat timeout from leader
-	electionTimer *time.Timer
 
 	// rpc proxy used in github to simulate failures
 	//rpcProxy *RPCProxy
@@ -80,6 +70,8 @@ type BrokerServer struct {
 
 	// channel to ensure servers start together
 	ready <-chan any
+	quit  chan any
+	wg    sync.WaitGroup
 }
 
 // i think we can just hardcode initialize one server as leader when we start up the cluster?
@@ -91,6 +83,7 @@ func NewBrokerServer(brokerid int, peerIds []int, state ServerState, ready <-cha
 	broker.peerClients = make(map[int]*rpc.Client)
 	broker.state = state
 	broker.ready = ready
+	broker.quit = make(chan any)
 
 	return broker
 }
@@ -132,16 +125,28 @@ func (broker *BrokerServer) Serve() {
 
 	broker.mu.Unlock()
 
-	// start listening for request
+	// start listening for request		MISSING WAITGROUP BUG
+	broker.wg.Add(1)
 	go func() {
+		defer broker.wg.Done()
 		for {
 			conn, err := broker.listener.Accept()
 			if err != nil {
-				log.Fatal(err)
-				continue
+
+				select {
+				case <-broker.quit:
+					return
+				default:
+					log.Fatal("accept error:", err)
+				}
+
 			}
+			broker.wg.Add(1)
 			// go routine so that rpc is non blocking
-			go broker.rpcServer.ServeConn(conn)
+			go func() {
+				broker.rpcServer.ServeConn(conn)
+				broker.wg.Done()
+			}()
 
 		}
 	}()
@@ -157,9 +162,73 @@ func (broker *BrokerServer) Call(id int, serviceMethod string, args any, reply a
 	if peer == nil {
 		return fmt.Errorf("call client %d after it's closed", id)
 	} else {
+		log.Printf("%d makes call to %d", broker.brokerid, id)
 		return peer.Call(serviceMethod, args, reply)
+	}
+
+	// if err := peer.Call(serviceMethod, args, reply); err != nil {
+	// 	// Optionally, try reconnecting or handle error more gracefully
+	// 	return fmt.Errorf("failed to call peer %d: %v", id, err)
+	// }
+	// return nil
+}
+
+////////////////////////////////////////////////////////////////////
+//THESE FUNCS ARE FOR TESTING AND DEPLOYMENT
+////////////////////////////////////////////////////////////////////
+
+// func to connect broker server to a peer when initializing network
+func (broker *BrokerServer) ConnectToPeer(peerId int, addr net.Addr) error {
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	if broker.peerClients[peerId] == nil {
+		client, err := rpc.Dial(addr.Network(), addr.String())
+		if err != nil {
+			return err
+		}
+		broker.peerClients[peerId] = client
+	}
+	return nil
+}
+
+// disconnect a server from network
+func (broker *BrokerServer) DisconnectPeer(peerId int) error {
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	if broker.peerClients[peerId] != nil {
+		err := broker.peerClients[peerId].Close()
+		broker.peerClients[peerId] = nil
+		return err
+	}
+	return nil
+}
+
+func (broker *BrokerServer) DisconnectAll() {
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	for id := range broker.peerClients {
+		if broker.peerClients[id] != nil {
+			broker.peerClients[id].Close()
+			broker.peerClients[id] = nil
+		}
 	}
 }
 
-// somewhere in the server. handle rpc heartbeat and crdt log appends
-// call funcs in election.go and replication.go as needed
+// shuts down server
+func (broker *BrokerServer) Shutdown() {
+
+	// stop em and rm
+	broker.mu2.Lock()
+	defer broker.mu2.Unlock()
+	broker.state = Dead
+	close(broker.rm.newCommitReadyChan)
+	close(broker.quit)
+	broker.listener.Close()
+	broker.wg.Wait()
+}
+
+func (broker *BrokerServer) GetListenAddr() net.Addr {
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	return broker.listener.Addr()
+}

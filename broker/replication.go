@@ -1,5 +1,7 @@
 package broker
 
+import "log"
+
 // basically if leader. rpc new log entries to followers and wait for responses the send commit
 // if follower when getting an update, send ready message then wait for commit message
 
@@ -64,6 +66,8 @@ func NewRM(id int, peerIds []int, broker *BrokerServer, commitChan chan<- Commit
 	// 1 ensures only 1 AppendEntry is pending
 	rm.triggerAEChan = make(chan struct{}, 1)
 
+	go rm.commitChanSender()
+
 	return rm
 }
 
@@ -107,12 +111,16 @@ func (rm *ReplicationModule) leaderSendAEs() {
 			}
 			rm.broker.mu2.Unlock()
 
+			log.Printf("%d sending AE to %d: %+v", rm.id, peerId, args)
+
 			var reply AppendEntriesReply
 			if err := rm.broker.Call(peerId, "ReplicationModule.AppendEntries", args, &reply); err == nil {
+				log.Printf("%d sent call to %d", rm.id, reply.id)
 				rm.broker.mu2.Lock()
 
-				// if it detects through heartbeat that own term is out of data, become follower
+				// if it detects through heartbeat that own term is out of date, become follower
 				if reply.Term > rm.broker.em.term {
+					log.Printf("leader %d's term is outdated", rm.id)
 					rm.broker.em.becomeFollower(reply.Term)
 					rm.broker.mu2.Unlock()
 					return
@@ -223,6 +231,7 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
+	id      int
 
 	// idk if these are necessary so remove if unused
 	ConflictIndex int
@@ -231,7 +240,7 @@ type AppendEntriesReply struct {
 
 // this func is primarily for followers to accept replication from leader
 func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
-
+	log.Printf("%d recieved AE from %d", rm.id, args.LeaderId)
 	rm.broker.mu2.Lock()
 	defer rm.broker.mu2.Unlock()
 
@@ -246,6 +255,7 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 		if rm.broker.state != Follower {
 			rm.broker.em.becomeFollower(args.Term)
 		}
+		log.Printf("heartbeat or command detected from leaderid %d", args.LeaderId)
 		rm.broker.em.resetElectionTimer()
 
 		// check if follower log contains previous entry (correct term and index)
@@ -299,7 +309,28 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 	}
 
 	reply.Term = rm.broker.em.term
+	reply.id = rm.id
 	// storage is for crashes. we will probably pull from db if we end up having enough time.
 	//rm.persistToStorage()
 	return nil
+}
+
+////////////////////////////////////////////////////////////////////
+//THESE FUNCS ARE FOR TESTING AND DEPLOYMENT
+////////////////////////////////////////////////////////////////////
+
+func (rm *ReplicationModule) Submit(command any) int {
+	rm.broker.mu2.Lock()
+
+	if rm.broker.state == Leader {
+		submitIndex := len(rm.log)
+		rm.log = append(rm.log, LogEntry{crdtOperation: command, Term: rm.broker.em.term})
+		//rm.persistToStorage()
+		rm.broker.mu2.Unlock()
+		rm.triggerAEChan <- struct{}{}
+		return submitIndex
+	}
+
+	rm.broker.mu2.Unlock()
+	return -1
 }

@@ -7,7 +7,8 @@ package broker
 // assumed to rely on a ReplicationModule (rm). can get log idx through something like  len(broker.rm.log)
 
 import (
-	"fmt"
+	//"fmt"
+	"log"
 	"math/rand"
 
 	//"sync"
@@ -59,7 +60,10 @@ func NewEM(id int, peerIds []int, broker *BrokerServer, ready <-chan any) *Elect
 	return em
 }
 
+// redo timer according to github
 func (em *ElectionModule) resetElectionTimer() {
+
+	log.Printf("%d resets election timer", em.id)
 	// maybe check if leader here?
 	// stop timer if there is still time left
 	if em.electionTimer != nil {
@@ -72,6 +76,7 @@ func (em *ElectionModule) resetElectionTimer() {
 
 	// start election when timer runs out
 	go func() {
+		log.Printf("%d detected no heartbeat from leader, starting election", em.id)
 		<-em.electionTimer.C
 		em.startElection()
 
@@ -79,6 +84,8 @@ func (em *ElectionModule) resetElectionTimer() {
 }
 
 func (em *ElectionModule) startElection() {
+	log.Printf("%d starts election", em.id)
+
 	em.broker.mu2.Lock()
 	em.broker.state = Candidate
 	em.term++
@@ -86,6 +93,7 @@ func (em *ElectionModule) startElection() {
 
 	currentTerm := em.term
 	em.broker.mu2.Unlock()
+	log.Printf("%d voted for %d for term %d", em.id, em.votedFor, em.term)
 
 	// server votes for itself
 	votes := 1
@@ -108,10 +116,13 @@ func (em *ElectionModule) startElection() {
 				LastLogTerm:  lastLogTerm,
 			}
 
+			log.Printf("%d sending requestvote to %d: %+v", em.id, peerId, args)
+
 			var reply RequestVoteReply
-			if err := em.broker.Call(peerId, "ReplicationModule.RequestVote", args, &reply); err == nil {
+			if err := em.broker.Call(peerId, "ElectionModule.RequestVote", args, &reply); err == nil {
 				em.broker.mu2.Lock()
 				defer em.broker.mu2.Unlock()
+				log.Printf("%d received requestvotereply %+v", em.id, reply)
 
 				if em.broker.state != Candidate {
 					return
@@ -119,13 +130,16 @@ func (em *ElectionModule) startElection() {
 
 				// if reply has greater term, become follower and update own term
 				if reply.Term > currentTerm {
+					log.Printf("%d term out of date", em.id)
 					em.becomeFollower(reply.Term)
 					return
 				} else if reply.Term == currentTerm { // if terms are equal
 					// if vote is granted by replier, increment votes and check for majority
 					if reply.voteGranted {
+						log.Printf("%s %d is granted vote from %d", em.broker.state, em.id, reply.id)
 						votes += 1
 						if votes*2 > len(em.peerIds)+1 {
+							//log.Printf("%d becomes leader", em.id)
 							em.becomeLeader()
 							return
 						}
@@ -134,15 +148,16 @@ func (em *ElectionModule) startElection() {
 
 			}
 
-			return // why is this here
+			//return // why is this here
 		}(peerId)
 	}
+	log.Printf("%d's election fails", em.id)
 	em.resetElectionTimer()
 }
 
 // set em to follower
 func (em *ElectionModule) becomeFollower(term int) {
-	fmt.Printf("%d becomes Follower with term:%d", em.id, term)
+	log.Printf("%d becomes Follower with term:%d", em.id, term)
 
 	em.broker.state = Follower
 
@@ -156,6 +171,7 @@ func (em *ElectionModule) becomeFollower(term int) {
 func (em *ElectionModule) becomeLeader() {
 
 	em.broker.state = Leader
+	log.Printf("%d becomes leader", em.id)
 
 	// structure to keep track of follower log indexes
 	for _, peerId := range em.peerIds {
@@ -166,9 +182,43 @@ func (em *ElectionModule) becomeLeader() {
 	// send heartbeats by using leaderSendAEs in replication.go
 	// heartbeets are just blank AppendEntries
 	go func(heartbeatTimeout time.Duration) {
-
+		log.Printf("%d sends heartbeats", em.id)
 		em.broker.rm.leaderSendAEs()
 
+		heartbeat := time.NewTimer(heartbeatTimeout)
+		defer heartbeat.Stop()
+		for {
+			doSend := false
+			select {
+			case <-heartbeat.C:
+				doSend = true
+
+				heartbeat.Stop()
+				heartbeat.Reset(heartbeatTimeout)
+			case _, ok := <-em.broker.rm.triggerAEChan:
+				if ok {
+					doSend = true
+				} else {
+					return
+				}
+
+				if !heartbeat.Stop() {
+					<-heartbeat.C
+				}
+				heartbeat.Reset(heartbeatTimeout)
+			}
+
+			// send another heartbeat
+			if doSend {
+				em.broker.mu2.Lock()
+				if em.broker.state != Leader {
+					em.broker.mu2.Unlock()
+					return
+				}
+				em.broker.mu2.Unlock()
+				em.broker.rm.leaderSendAEs()
+			}
+		}
 	}(50 * time.Millisecond)
 
 }
@@ -187,6 +237,7 @@ type RequestVoteArgs struct {
 type RequestVoteReply struct {
 	Term        int
 	voteGranted bool
+	id          int
 }
 
 // rpc func that handles incoming vote requests sent from startElection()
@@ -215,6 +266,7 @@ func (em *ElectionModule) RequestVote(args RequestVoteArgs, reply *RequestVoteRe
 	}
 
 	reply.Term = em.term
+	reply.id = em.id
 
 	return nil
 }
@@ -239,6 +291,12 @@ func (em *ElectionModule) lastLogIndexAndTerm() (int, int) {
 // 	}
 // }
 
-func (rm *ReplicationModule) test() {
+////////////////////////////////////////////////////////////////////
+//THESE FUNCS ARE FOR TESTING AND DEPLOYMENT
+////////////////////////////////////////////////////////////////////
 
+func (em *ElectionModule) Report() (id int, term int, idLeader bool) {
+	em.broker.mu2.Lock()
+	defer em.broker.mu2.Unlock()
+	return em.id, em.term, em.broker.state == Leader
 }

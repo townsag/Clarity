@@ -52,7 +52,20 @@ func NewHarness(t *testing.T, n int) *Harness {
 			}
 		}
 
-		//storage[i] = NewMapStorage()
+		// pre initialize one node as leader
+		// if i == 0 {
+		// 	commitChans[i] = make(chan CommitEntry)
+		// 	ns[i] = NewBrokerServer(i, peerIds, Leader, ready /*,commitChans[i]*/)
+		// 	ns[i].Serve()
+		// 	alive[i] = true
+		// } else {
+		// 	//storage[i] = NewMapStorage()
+		// 	commitChans[i] = make(chan CommitEntry)
+		// 	ns[i] = NewBrokerServer(i, peerIds, Follower, ready /*,commitChans[i]*/)
+		// 	ns[i].Serve()
+		// 	alive[i] = true
+		// }
+
 		commitChans[i] = make(chan CommitEntry)
 		ns[i] = NewBrokerServer(i, peerIds, Follower, ready /*,commitChans[i]*/)
 		ns[i].Serve()
@@ -234,7 +247,7 @@ func (h *Harness) CheckCommitted(cmd int) (nc int, index int) {
 		cmdAtC := -1
 		for i := 0; i < h.n; i++ {
 			if h.connected[i] {
-				cmdOfN := h.commits[i][c].Command.(int)
+				cmdOfN := h.commits[i][c].crdtOperation.(int)
 				if cmdAtC >= 0 {
 					if cmdOfN != cmdAtC {
 						h.t.Errorf("got %d, want %d at h.commits[%d][%d]", cmdOfN, cmdAtC, i, c)
@@ -292,7 +305,7 @@ func (h *Harness) CheckNotCommitted(cmd int) {
 }
 
 func (h *Harness) SubmitToServer(serverId int, cmd any) int {
-	return h.cluster[serverId].Submit(cmd)
+	return h.cluster[serverId].rm.Submit(cmd)
 }
 
 func tlog(format string, a ...any) {
@@ -302,4 +315,13 @@ func tlog(format string, a ...any) {
 
 func sleepMs(n int) {
 	time.Sleep(time.Duration(n) * time.Millisecond)
+}
+
+func (h *Harness) collectCommits(i int) {
+	for c := range h.commitChans[i] {
+		h.mu.Lock()
+		tlog("collectCommits(%d) got %+v", i, c)
+		h.commits[i] = append(h.commits[i], c)
+		h.mu.Unlock()
+	}
 }
