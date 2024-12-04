@@ -175,7 +175,7 @@ func (em *ElectionModule) startElection() {
 				LastLogTerm:  lastLogTerm,
 			}
 
-			log.Printf("%d sending RequestVote to %d: %+v", em.id, peerId, args)
+			log.Printf("%d sending RequestVote Call to %d: %+v", em.id, peerId, args)
 
 			var reply RequestVoteReply
 			if err := em.broker.Call(peerId, "ElectionModule.RequestVote", args, &reply); err == nil {

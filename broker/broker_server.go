@@ -242,7 +242,7 @@ func (broker *BrokerServer) Call(id int, serviceMethod string, args any, reply a
 	if peer == nil {
 		return fmt.Errorf("call client %d after it's closed", id)
 	} else {
-		log.Printf("%d makes call to %d", broker.brokerid, id)
+		//log.Printf("%d makes call to %d", broker.brokerid, id)
 		return peer.Call(serviceMethod, args, reply)
 	}
 

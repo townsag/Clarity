@@ -268,7 +268,7 @@ func (h *Harness) CheckCommitted(cmd int) (nc int, index int) {
 		cmdAtC := -1
 		for i := 0; i < h.n; i++ {
 			if h.connected[i] {
-				cmdOfN := h.commits[i][c].crdtOperation.(int)
+				cmdOfN := h.commits[i][c].CRDTOperation.(int)
 				if cmdAtC >= 0 {
 					if cmdOfN != cmdAtC {
 						h.t.Errorf("got %d, want %d at h.commits[%d][%d]", cmdOfN, cmdAtC, i, c)
@@ -295,6 +295,7 @@ func (h *Harness) CheckCommitted(cmd int) (nc int, index int) {
 		}
 	}
 	h.t.Errorf("cmd=%d not found in commits", cmd)
+	log.Printf("commits: %+v", h.commits)
 	return -1, -1
 }
 
@@ -316,7 +317,7 @@ func (h *Harness) CheckNotCommitted(cmd int) {
 	for i := 0; i < h.n; i++ {
 		if h.connected[i] {
 			for c := 0; c < len(h.commits[i]); c++ {
-				gotCmd := h.commits[i][c].crdtOperation.(int)
+				gotCmd := h.commits[i][c].CRDTOperation.(int)
 				if gotCmd == cmd {
 					h.t.Errorf("found %d at commits[%d][%d], expected none", cmd, i, c)
 				}
@@ -345,4 +346,11 @@ func (h *Harness) collectCommits(i int) {
 		h.commits[i] = append(h.commits[i], c)
 		h.mu.Unlock()
 	}
+}
+
+func (h *Harness) GetLogAndCommitIndexFromServer(serverId int) ([]LogEntry, int, int) {
+	server := h.cluster[serverId]
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	return server.rm.log, server.rm.commitIndex, len(server.rm.log)
 }

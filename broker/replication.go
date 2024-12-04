@@ -10,7 +10,8 @@ import (
 //"sync"
 
 type CommitEntry struct {
-	crdtOperation any
+	CRDTOperation any
+	//CRDTOperation int
 
 	Index int
 
@@ -18,7 +19,9 @@ type CommitEntry struct {
 }
 
 type LogEntry struct {
-	crdtOperation any
+	// crdtOperation int
+
+	CRDTOperation any
 	Term          int
 }
 
@@ -113,11 +116,11 @@ func (rm *ReplicationModule) leaderSendAEs() {
 			}
 			rm.broker.mu2.Unlock()
 
-			log.Printf("%d sending AE to %d: %+v", rm.id, peerId, args)
+			log.Printf("%d sending AE Call to %d: %+v", rm.id, peerId, args)
 
 			var reply AppendEntriesReply
 			if err := rm.broker.Call(peerId, "ReplicationModule.AppendEntries", args, &reply); err == nil {
-				log.Printf("%d sent call to %d", rm.id, reply.id)
+				log.Printf("%s %d receives AE reply from %d", rm.broker.state, rm.id, reply.Id)
 				rm.broker.mu2.Lock()
 
 				// if it detects through heartbeat that own term is out of date, become follower
@@ -131,6 +134,7 @@ func (rm *ReplicationModule) leaderSendAEs() {
 				// if broker is leader and it's term is up to date
 				if rm.broker.state == Leader && currentTerm == reply.Term {
 					if reply.Success {
+						log.Printf("%d replies successful append", reply.Id)
 						rm.broker.em.nextIndex[peerId] = nextIndex + len(entries)
 						rm.broker.em.matchIndex[peerId] = rm.broker.em.nextIndex[peerId] - 1
 
@@ -141,12 +145,14 @@ func (rm *ReplicationModule) leaderSendAEs() {
 								matches := 1
 								for _, peerId := range rm.peerIds {
 									if rm.broker.em.matchIndex[peerId] >= i {
+										log.Printf("%d is ready to commit", peerId)
 										matches++
 									}
 								}
 								// currently set to atomic. raft does majority
 								// if matches*2 > len(rm.peerIds)+1
 								if matches == len(rm.peerIds) {
+									log.Printf("all followers ready to commit, %s %d updates commitIndex to %d", rm.broker.state, rm.id, i)
 									rm.commitIndex = i
 								}
 							}
@@ -209,10 +215,11 @@ func (rm *ReplicationModule) commitChanSender() {
 
 		for i, entry := range entries {
 			rm.commitChan <- CommitEntry{
-				crdtOperation: entry.crdtOperation,
+				CRDTOperation: entry.CRDTOperation,
 				Index:         savedLastApplied + i + 1,
 				Term:          savedTerm,
 			}
+			log.Printf("%+v committed to log", entry.CRDTOperation)
 		}
 	}
 }
@@ -233,7 +240,7 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
-	id      int
+	Id      int
 
 	// idk if these are necessary so remove if unused
 	ConflictIndex int
@@ -242,7 +249,7 @@ type AppendEntriesReply struct {
 
 // this func is primarily for followers to accept replication from leader
 func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
-	log.Printf("%d recieved AE from %d", rm.id, args.LeaderId)
+	log.Printf("%s %d received AE from %d: %+v", rm.broker.state, rm.id, args.LeaderId, args)
 	rm.broker.mu2.Lock()
 	defer rm.broker.mu2.Unlock()
 
@@ -257,7 +264,7 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 		if rm.broker.state != Follower {
 			rm.broker.em.becomeFollower(args.Term)
 		}
-		log.Printf("heartbeat or command detected from leaderid %d", args.LeaderId)
+		log.Printf("%s %d detects heartbeat or command from leaderid %d", rm.broker.state, rm.id, args.LeaderId)
 		//rm.broker.em.electionResetEvent = time.Now()
 		rm.broker.em.resetElectionTimer()
 
@@ -286,6 +293,7 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 			// append missing entries to follower log
 			if newEntriesIndex < len(args.Entries) {
 				rm.log = append(rm.log[:logInsertIndex], args.Entries[newEntriesIndex:]...)
+				log.Printf("%+v appended from index %d for term %d", args.Entries, newEntriesIndex, rm.log[newEntriesIndex].Term)
 			}
 
 			if args.LeaderCommit > rm.commitIndex {
@@ -312,7 +320,7 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 	}
 
 	reply.Term = rm.broker.em.term
-	reply.id = rm.id
+	reply.Id = rm.id
 	// storage is for crashes. we will probably pull from db if we end up having enough time.
 	//rm.persistToStorage()
 	return nil
@@ -327,7 +335,7 @@ func (rm *ReplicationModule) Submit(command any) int {
 
 	if rm.broker.state == Leader {
 		submitIndex := len(rm.log)
-		rm.log = append(rm.log, LogEntry{crdtOperation: command, Term: rm.broker.em.term})
+		rm.log = append(rm.log, LogEntry{CRDTOperation: command, Term: rm.broker.em.term})
 		//rm.persistToStorage()
 		rm.broker.mu2.Unlock()
 		rm.triggerAEChan <- struct{}{}
