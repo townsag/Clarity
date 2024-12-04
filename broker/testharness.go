@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"fmt"
 	"log"
 	"sync"
 	"testing"
@@ -33,6 +34,8 @@ type Harness struct {
 
 	n int
 	t *testing.T
+
+	peerAddrs map[int]string
 }
 
 func NewHarness(t *testing.T, n int) *Harness {
@@ -43,6 +46,11 @@ func NewHarness(t *testing.T, n int) *Harness {
 	commits := make([][]CommitEntry, n)
 	ready := make(chan any)
 	//storage := make([]*MapStorage, n)
+
+	peerAddrs := make(map[int]string)
+	for i := 0; i < n; i++ {
+		peerAddrs[i] = fmt.Sprintf("127.0.0.1:%d", 8000+i)
+	}
 
 	for i := 0; i < n; i++ {
 		peerIds := make([]int, 0)
@@ -67,7 +75,7 @@ func NewHarness(t *testing.T, n int) *Harness {
 		// }
 
 		commitChans[i] = make(chan CommitEntry)
-		ns[i] = NewBrokerServer(i, peerIds, Follower, ready /*,commitChans[i]*/)
+		ns[i] = NewBrokerServer(i, peerIds, peerAddrs, peerAddrs[i], Follower, ready /*,commitChans[i]*/)
 		ns[i].Serve()
 		alive[i] = true
 
@@ -174,7 +182,7 @@ func (h *Harness) RestartPeer(id int) {
 	}
 
 	ready := make(chan any)
-	h.cluster[id] = NewBrokerServer(id, peerIds, Follower, ready /*,h.commitChans[i]*/)
+	h.cluster[id] = NewBrokerServer(id, peerIds, h.peerAddrs, h.peerAddrs[id], Follower, ready /*,h.commitChans[i]*/)
 	h.cluster[id].Serve()
 	h.ReconnectPeer(id)
 	close(ready)
@@ -217,6 +225,7 @@ func (h *Harness) CheckSingleLeader() (int, int) {
 			}
 		}
 		if leaderId >= 0 {
+
 			return leaderId, leaderTerm
 		}
 		time.Sleep(150 * time.Millisecond)
@@ -233,6 +242,7 @@ func (h *Harness) CheckNoLeader() {
 				h.t.Fatalf("server %d leader; want none", i)
 			}
 		}
+		log.Printf("No Leader Detected")
 	}
 }
 

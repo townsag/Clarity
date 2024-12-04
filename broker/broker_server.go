@@ -3,9 +3,11 @@ package broker
 // gonna move a bunch of shit to the consensus.go file
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/rpc"
 	"sync"
 )
@@ -72,11 +74,16 @@ type BrokerServer struct {
 	ready <-chan any
 	quit  chan any
 	wg    sync.WaitGroup
+
+	// for http
+	httpServer *http.Server
+	httpAddr   string
+	peerAddrs  map[int]string
 }
 
 // i think we can just hardcode initialize one server as leader when we start up the cluster?
 // ready <-chan any is for make sure everything starts are the same time when close(ready) in whatever starting the servers
-func NewBrokerServer(brokerid int, peerIds []int, state ServerState, ready <-chan any) *BrokerServer {
+func NewBrokerServer(brokerid int, peerIds []int, peerAddrs map[int]string, httpAddr string, state ServerState, ready <-chan any) *BrokerServer {
 	broker := new(BrokerServer)
 	broker.brokerid = brokerid
 	broker.peerIds = peerIds
@@ -84,6 +91,8 @@ func NewBrokerServer(brokerid int, peerIds []int, state ServerState, ready <-cha
 	broker.state = state
 	broker.ready = ready
 	broker.quit = make(chan any)
+	broker.peerAddrs = peerAddrs
+	broker.httpAddr = httpAddr
 
 	return broker
 }
@@ -103,12 +112,62 @@ func NewBrokerServer(brokerid int, peerIds []int, state ServerState, ready <-cha
 //		maintain timeout to elect new leader of leader is dead (no heartbeat)
 //
 
+// subject to change to fit what crdt looks like
+type CRDTOperation struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Value any    `json:"value"`
+}
+
+// http receive to recieve crdts
+func (broker *BrokerServer) handleCRTDOperation(w http.ResponseWriter, r *http.Request) {
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	broker.mu.Lock()
+	leaderAddr := broker.em.GetLeaderAddr()
+	broker.mu.Unlock()
+
+	// check first is this broker is leader
+	if broker.state != Leader {
+		log.Printf("%d Rejecting CRDT operation: Not the leader", broker.brokerid)
+		w.Header().Set("Location", leaderAddr) // Redirect to the leader's address
+		http.Error(w, "This server is not the leader", http.StatusTemporaryRedirect)
+		return
+	}
+
+	var op CRDTOperation
+	err := json.NewDecoder(r.Body).Decode(&op)
+	if err != nil {
+		http.Error(w, "Invalid CRDT operation payload", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("[%d] Received CRDT operation: %+v", broker.brokerid, op)
+
+	broker.mu2.Lock()
+	defer broker.mu.Unlock()
+
+	// leader tries to append
+	// err = broker.rm.AppendCRDTOperation(op)
+	// if err != nil {
+	// 	http.Error(w, "Failed to append operation to Raft log", http.StatusInternalServerError)
+	// 	return
+	// }
+
+	w.WriteHeader(http.StatusAccepted)
+	w.Write([]byte("CRDT operation accepted"))
+}
+
 func (broker *BrokerServer) Serve() {
 
 	broker.mu.Lock()
 
 	// initialize election and replication modules for broker server
-	broker.em = NewEM(broker.brokerid, broker.peerIds, broker, broker.ready)
+	broker.em = NewEM(broker.brokerid, broker.peerIds, broker.peerAddrs, broker, broker.ready)
 	broker.rm = NewRM(broker.brokerid, broker.peerIds, broker, broker.commitChan)
 
 	// create new rpcServer and register with EM and RM
@@ -125,7 +184,27 @@ func (broker *BrokerServer) Serve() {
 
 	broker.mu.Unlock()
 
-	// start listening for request		MISSING WAITGROUP BUG
+	// initialize and start http server to receive crdts from application server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/crdt", broker.handleCRTDOperation)
+
+	broker.httpServer = &http.Server{
+		Addr:    broker.httpAddr,
+		Handler: mux,
+	}
+
+	log.Printf("[%d] HTTP server listening on %s", broker.brokerid, broker.httpAddr)
+
+	broker.wg.Add(1)
+
+	go func() {
+		defer broker.wg.Done()
+		if err := broker.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("[%d] HTTP server error: %v", broker.brokerid, err)
+		}
+	}()
+
+	// start listening for requests from other brokers
 	broker.wg.Add(1)
 	go func() {
 		defer broker.wg.Done()
@@ -225,6 +304,14 @@ func (broker *BrokerServer) Shutdown() {
 	close(broker.rm.newCommitReadyChan)
 	close(broker.quit)
 	broker.listener.Close()
+
+	// stop http server
+	if broker.httpServer != nil {
+		if err := broker.httpServer.Close(); err != nil {
+			log.Printf("[%d] Error shutting down HTTP server: %v", broker.brokerid, err)
+		}
+	}
+
 	broker.wg.Wait()
 }
 

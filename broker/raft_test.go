@@ -6,28 +6,6 @@ import (
 	"time"
 )
 
-func TestElectionBasic(t *testing.T) {
-	h := NewHarness(t, 3)
-	defer h.Shutdown()
-
-	origLeaderId, origTerm := h.CheckSingleLeader()
-
-	log.Printf("%d is leader on term %d", origLeaderId, origTerm)
-
-	h.DisconnectPeer(origLeaderId)
-	sleepMs(1000)
-
-	newLeaderId, newTerm := h.CheckSingleLeader()
-	if newLeaderId == origLeaderId {
-		t.Errorf("want new leader to be different from orig leader")
-	}
-	if newTerm <= origTerm {
-		t.Errorf("want newTerm <= origTerm, got %d and %d", newTerm, origTerm)
-	}
-}
-
-//^ heartbeat not working
-
 func TestElectionLeaderDisconnect(t *testing.T) {
 	h := NewHarness(t, 3)
 	defer h.Shutdown()
@@ -46,11 +24,12 @@ func TestElectionLeaderDisconnect(t *testing.T) {
 	}
 }
 
-func TestElectionLeaderAndAnotherDisconnect(t *testing.T) {
+func TestElection2LeaderDC(t *testing.T) {
 	h := NewHarness(t, 3)
 	defer h.Shutdown()
 
 	origLeaderId, _ := h.CheckSingleLeader()
+	log.Printf("leader is %d", origLeaderId)
 
 	h.DisconnectPeer(origLeaderId)
 	otherId := (origLeaderId + 1) % 3
@@ -104,4 +83,21 @@ func TestElectionFollowerComesBack(t *testing.T) {
 	if newTerm <= origTerm {
 		t.Errorf("newTerm=%d, origTerm=%d", newTerm, origTerm)
 	}
+}
+
+func TestCommitOneCommand(t *testing.T) {
+
+	h := NewHarness(t, 3)
+	defer h.Shutdown()
+
+	origLeaderId, _ := h.CheckSingleLeader()
+
+	tlog("submitting 42 to %d", origLeaderId)
+	isLeader := h.SubmitToServer(origLeaderId, 42) >= 0
+	if !isLeader {
+		t.Errorf("want id=%d leader, but it's not", origLeaderId)
+	}
+
+	sleepMs(250)
+	h.CheckCommittedN(42, 3)
 }

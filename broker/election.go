@@ -41,9 +41,15 @@ type ElectionModule struct {
 	matchIndex map[int]int
 
 	//electionResetEvent time.Time
+
+	// in the case a follower receives an http request
+	// each broker keeps track of who the leader is and a list of peer addresses
+	// so the follower can send an http reply back with the leader's address
+	leaderId  int
+	peerAddrs map[int]string
 }
 
-func NewEM(id int, peerIds []int, broker *BrokerServer, ready <-chan any) *ElectionModule {
+func NewEM(id int, peerIds []int, peerAddrs map[int]string, broker *BrokerServer, ready <-chan any) *ElectionModule {
 
 	em := new(ElectionModule)
 
@@ -54,6 +60,9 @@ func NewEM(id int, peerIds []int, broker *BrokerServer, ready <-chan any) *Elect
 
 	em.nextIndex = make(map[int]int)
 	em.matchIndex = make(map[int]int)
+
+	em.leaderId = -1
+	em.peerAddrs = peerAddrs
 
 	// start election timeouts together
 	go func() {
@@ -114,13 +123,14 @@ func (em *ElectionModule) resetElectionTimer() {
 	}
 
 	// set and start new timer
-	timeout := time.Duration(150+rand.Intn(150)) * time.Millisecond
+	timeout := time.Duration(500+rand.Intn(150)) * time.Millisecond
 	em.electionTimer = time.NewTimer(timeout)
 
 	// start election when timer runs out
 	go func() {
-		log.Printf("%d detected no heartbeat from leader, starting election", em.id)
+
 		<-em.electionTimer.C
+		log.Printf("%d detected no heartbeat from leader, starting election", em.id)
 		em.startElection()
 
 	}()
@@ -135,6 +145,8 @@ func (em *ElectionModule) startElection() {
 	//em.resetElectionTimer()
 
 	em.votedFor = em.id
+
+	em.leaderId = -1
 
 	currentTerm := em.term
 
@@ -215,6 +227,7 @@ func (em *ElectionModule) becomeFollower(term int) {
 
 	em.term = term
 	em.votedFor = -1
+	em.leaderId = -1
 	//em.electionResetEvent = time.Now()
 	go em.resetElectionTimer()
 
@@ -224,6 +237,11 @@ func (em *ElectionModule) becomeFollower(term int) {
 func (em *ElectionModule) becomeLeader() {
 
 	em.broker.state = Leader
+	em.leaderId = em.id
+
+	// stop timer for leader election
+	em.electionTimer.Stop()
+
 	log.Printf("%d becomes leader", em.id)
 
 	// structure to keep track of follower log indexes
@@ -322,6 +340,7 @@ func (em *ElectionModule) RequestVote(args RequestVoteArgs, reply *RequestVoteRe
 		log.Printf("%d voteGranted = true for %d", em.id, args.CandidateId)
 		reply.VoteGranted = true
 		em.votedFor = args.CandidateId
+		em.leaderId = args.CandidateId
 		//em.electionResetEvent = time.Now()
 		//em.resetElectionTimer()
 	} else {
@@ -356,6 +375,16 @@ func (em *ElectionModule) lastLogIndexAndTerm() (int, int) {
 // 		return -1, -1
 // 	}
 // }
+
+func (em *ElectionModule) GetLeaderAddr() string {
+	em.broker.mu2.Lock()
+	defer em.broker.mu2.Unlock()
+
+	if leaderAddr, ok := em.peerAddrs[em.leaderId]; ok {
+		return leaderAddr
+	}
+	return ""
+}
 
 ////////////////////////////////////////////////////////////////////
 //THESE FUNCS ARE FOR TESTING AND DEPLOYMENT
