@@ -52,7 +52,7 @@ func NewHarness(t *testing.T, n int) *Harness {
 			}
 		}
 
-		// pre initialize one node as leader
+		//pre initialize one node as leader
 		// if i == 0 {
 		// 	commitChans[i] = make(chan CommitEntry)
 		// 	ns[i] = NewBrokerServer(i, peerIds, Leader, ready /*,commitChans[i]*/)
@@ -223,6 +223,17 @@ func (h *Harness) CheckSingleLeader() (int, int) {
 	}
 	h.t.Fatalf("leader not found")
 	return -1, -1
+}
+
+func (h *Harness) CheckNoLeader() {
+	for i := 0; i < h.n; i++ {
+		if h.connected[i] {
+			_, _, isLeader := h.cluster[i].em.Report()
+			if isLeader {
+				h.t.Fatalf("server %d leader; want none", i)
+			}
+		}
+	}
 }
 
 func (h *Harness) CheckCommitted(cmd int) (nc int, index int) {

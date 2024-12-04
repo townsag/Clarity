@@ -145,6 +145,7 @@ func (broker *BrokerServer) Serve() {
 			// go routine so that rpc is non blocking
 			go func() {
 				broker.rpcServer.ServeConn(conn)
+				//log.Printf("serve conn")
 				broker.wg.Done()
 			}()
 

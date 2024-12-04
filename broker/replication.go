@@ -1,6 +1,8 @@
 package broker
 
-import "log"
+import (
+	"log"
+)
 
 // basically if leader. rpc new log entries to followers and wait for responses the send commit
 // if follower when getting an update, send ready message then wait for commit message
@@ -256,6 +258,7 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 			rm.broker.em.becomeFollower(args.Term)
 		}
 		log.Printf("heartbeat or command detected from leaderid %d", args.LeaderId)
+		//rm.broker.em.electionResetEvent = time.Now()
 		rm.broker.em.resetElectionTimer()
 
 		// check if follower log contains previous entry (correct term and index)

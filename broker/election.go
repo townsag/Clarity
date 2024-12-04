@@ -39,6 +39,8 @@ type ElectionModule struct {
 	// map is like a python dict
 	nextIndex  map[int]int
 	matchIndex map[int]int
+
+	//electionResetEvent time.Time
 }
 
 func NewEM(id int, peerIds []int, broker *BrokerServer, ready <-chan any) *ElectionModule {
@@ -48,19 +50,60 @@ func NewEM(id int, peerIds []int, broker *BrokerServer, ready <-chan any) *Elect
 	em.broker = broker
 	em.id = id
 	em.peerIds = peerIds
+	em.votedFor = -1
+
+	em.nextIndex = make(map[int]int)
+	em.matchIndex = make(map[int]int)
 
 	// start election timeouts together
 	go func() {
 		<-ready
-		em.broker.mu2.Lock()
+		//em.broker.mu2.Lock()
+		//em.electionResetEvent = time.Now()
+		//em.resetElectionTimer()
+		//em.broker.mu2.Unlock()
 		em.resetElectionTimer()
-		em.broker.mu2.Unlock()
 	}()
 
 	return em
 }
 
 // redo timer according to github
+// ////////////////////////////////////////////
+// func (em *ElectionModule) resetElectionTimer() {
+// 	timeout := time.Duration(1000+rand.Intn(150)) * time.Millisecond
+// 	em.broker.mu2.Lock()
+// 	termStarted := em.term // for logging
+// 	em.broker.mu2.Unlock()
+// 	log.Printf("%d resets election timer", em.id)
+
+// 	ticker := time.NewTicker(10 * time.Millisecond)
+// 	defer ticker.Stop()
+// 	for {
+// 		<-ticker.C
+
+// 		em.broker.mu2.Lock()
+// 		if em.broker.state != Candidate && em.broker.state != Follower {
+// 			em.broker.mu2.Unlock()
+// 			return
+// 		}
+
+// 		if termStarted != em.term {
+// 			em.broker.mu2.Unlock()
+// 			return
+// 		}
+
+// 		if elapsed := time.Since(em.electionResetEvent); elapsed >= timeout {
+// 			em.startElection()
+// 			em.broker.mu2.Unlock()
+// 			return
+// 		}
+// 		em.broker.mu2.Unlock()
+// 	}
+// }
+
+///////////////////////////////////////////////
+
 func (em *ElectionModule) resetElectionTimer() {
 
 	log.Printf("%d resets election timer", em.id)
@@ -86,13 +129,17 @@ func (em *ElectionModule) resetElectionTimer() {
 func (em *ElectionModule) startElection() {
 	log.Printf("%d starts election", em.id)
 
-	em.broker.mu2.Lock()
 	em.broker.state = Candidate
 	em.term++
+
+	//em.resetElectionTimer()
+
 	em.votedFor = em.id
 
 	currentTerm := em.term
-	em.broker.mu2.Unlock()
+
+	//em.electionResetEvent = time.Now()
+
 	log.Printf("%d voted for %d for term %d", em.id, em.votedFor, em.term)
 
 	// server votes for itself
@@ -116,15 +163,17 @@ func (em *ElectionModule) startElection() {
 				LastLogTerm:  lastLogTerm,
 			}
 
-			log.Printf("%d sending requestvote to %d: %+v", em.id, peerId, args)
+			log.Printf("%d sending RequestVote to %d: %+v", em.id, peerId, args)
 
 			var reply RequestVoteReply
 			if err := em.broker.Call(peerId, "ElectionModule.RequestVote", args, &reply); err == nil {
 				em.broker.mu2.Lock()
 				defer em.broker.mu2.Unlock()
-				log.Printf("%d received requestvotereply %+v", em.id, reply)
+				log.Printf("%d received RequestVoteReply %+v", em.id, reply) // for some reason recieved reply is always false even though followers reply true
 
+				// state no longer candidate during election
 				if em.broker.state != Candidate {
+					log.Printf("while waiting for reply, state = %v", em.broker.state)
 					return
 				}
 
@@ -135,8 +184,8 @@ func (em *ElectionModule) startElection() {
 					return
 				} else if reply.Term == currentTerm { // if terms are equal
 					// if vote is granted by replier, increment votes and check for majority
-					if reply.voteGranted {
-						log.Printf("%s %d is granted vote from %d", em.broker.state, em.id, reply.id)
+					if reply.VoteGranted {
+						log.Printf("%s %d is granted vote from %d", em.broker.state, em.id, reply.Id)
 						votes += 1
 						if votes*2 > len(em.peerIds)+1 {
 							//log.Printf("%d becomes leader", em.id)
@@ -146,13 +195,16 @@ func (em *ElectionModule) startElection() {
 					}
 				}
 
+			} else {
+				log.Printf("error with requestvote call %s", err)
 			}
 
 			//return // why is this here
 		}(peerId)
 	}
 	log.Printf("%d's election fails", em.id)
-	em.resetElectionTimer()
+	go em.resetElectionTimer()
+
 }
 
 // set em to follower
@@ -163,7 +215,8 @@ func (em *ElectionModule) becomeFollower(term int) {
 
 	em.term = term
 	em.votedFor = -1
-	em.resetElectionTimer()
+	//em.electionResetEvent = time.Now()
+	go em.resetElectionTimer()
 
 }
 
@@ -180,7 +233,7 @@ func (em *ElectionModule) becomeLeader() {
 	}
 
 	// send heartbeats by using leaderSendAEs in replication.go
-	// heartbeets are just blank AppendEntries
+	// heartbeats are just blank AppendEntries
 	go func(heartbeatTimeout time.Duration) {
 		log.Printf("%d sends heartbeats", em.id)
 		em.broker.rm.leaderSendAEs()
@@ -220,12 +273,13 @@ func (em *ElectionModule) becomeLeader() {
 			}
 		}
 	}(50 * time.Millisecond)
-
 }
 
 // //////////////////////////////////////////////////
 // RPC funcs
 // //////////////////////////////////////////////////
+
+// there is a naming convention. exported fields must be capitalized
 type RequestVoteArgs struct {
 	Term        int
 	CandidateId int
@@ -236,20 +290,27 @@ type RequestVoteArgs struct {
 
 type RequestVoteReply struct {
 	Term        int
-	voteGranted bool
-	id          int
+	VoteGranted bool
+	Id          int
 }
 
 // rpc func that handles incoming vote requests sent from startElection()
 func (em *ElectionModule) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) error {
+	log.Printf("%d recieves RequestVote from %d", em.id, args.CandidateId)
+
 	em.broker.mu2.Lock()
 	defer em.broker.mu2.Unlock()
+
+	if em.broker.state == Dead {
+		return nil
+	}
 
 	lastLogIndex, lastLogTerm := em.lastLogIndexAndTerm()
 
 	// check vote request term with own term
 	// if own term is lesser, become follower
 	if args.Term > em.term {
+		log.Printf("%d term out of data in RequestVote", em.id)
 		em.becomeFollower(args.Term)
 	}
 
@@ -258,15 +319,20 @@ func (em *ElectionModule) RequestVote(args RequestVoteArgs, reply *RequestVoteRe
 	if em.term == args.Term && (em.votedFor == -1 || em.votedFor == args.CandidateId) &&
 		(args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex)) {
 
-		reply.voteGranted = true
+		log.Printf("%d voteGranted = true for %d", em.id, args.CandidateId)
+		reply.VoteGranted = true
 		em.votedFor = args.CandidateId
-		em.resetElectionTimer()
+		//em.electionResetEvent = time.Now()
+		//em.resetElectionTimer()
 	} else {
-		reply.voteGranted = false
+		log.Printf("%d voteGranted = false for %d", em.id, args.CandidateId)
+		reply.VoteGranted = false
 	}
 
 	reply.Term = em.term
-	reply.id = em.id
+	reply.Id = em.id
+
+	log.Printf("%d replies RequestVote from %d. %+v", em.id, args.CandidateId, reply)
 
 	return nil
 }
