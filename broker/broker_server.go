@@ -108,7 +108,7 @@ type CRDTMessage struct { // Type, Index, Value combine to create crdt operation
 	Source    string      `json:"source"`          // "client" or "broker"
 }
 
-// http receive to recieve crdts
+// http func to recieve crdts
 func (broker *BrokerServer) handleCRTDOperation(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
@@ -120,7 +120,7 @@ func (broker *BrokerServer) handleCRTDOperation(w http.ResponseWriter, r *http.R
 	// since our implementation of the appserver multicasts to all nodes
 	// when follower recieves message, just ignore
 	if broker.state != Leader {
-		log.Printf("%s %d ignores CRDT message: Not the leader", broker.state, broker.brokerid) // Redirect to the leader's address
+		log.Printf("%s %d ignores CRDT message: Not the leader", broker.state, broker.brokerid)
 		http.Error(w, "This server is not the leader", http.StatusForbidden)
 		return
 	}
@@ -150,6 +150,32 @@ func (broker *BrokerServer) handleCRTDOperation(w http.ResponseWriter, r *http.R
 	w.Write([]byte("CRDT operation accepted"))
 }
 
+// http func to send logs
+func (broker *BrokerServer) handleLogGetRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+
+	// if broker is not leader, ignore GET request
+	if broker.state != Leader {
+		log.Printf("%s %d ignores GET log requset: Not the leader", broker.state, broker.brokerid)
+		http.Error(w, "This server is not the leader", http.StatusForbidden)
+		return
+	}
+
+	// get and send logs
+	sendlogs := broker.rm.log
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(sendlogs); err != nil {
+		http.Error(w, fmt.Sprintf("Error encoding logs: %v", err), http.StatusInternalServerError)
+	}
+
+}
+
 func (broker *BrokerServer) Serve() {
 
 	broker.mu.Lock()
@@ -174,7 +200,12 @@ func (broker *BrokerServer) Serve() {
 
 	// initialize and start http server to receive crdts from application server
 	mux := http.NewServeMux()
+
+	// func for handling incoming crdt Messages from application server
 	mux.HandleFunc("/crdt", broker.handleCRTDOperation)
+
+	// func for handling incoming log request from application server
+	mux.HandleFunc("/logrequest", broker.handleLogGetRequest)
 
 	broker.httpServer = &http.Server{
 		Addr:    broker.httpAddr,

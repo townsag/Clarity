@@ -142,7 +142,7 @@ func (s *AppServer) requestCRDTLogs() error {
 	}
 
 	for _, brokerAddr := range s.brokers {
-		url := fmt.Sprintf("http://%s/logs", brokerAddr)
+		url := fmt.Sprintf("http://%s/logrequest", brokerAddr)
 
 		req, err := http.NewRequest("GET", url, nil)
 		if err != nil {
@@ -163,7 +163,12 @@ func (s *AppServer) requestCRDTLogs() error {
 		}(resp.Body)
 
 		// If we get a redirect, the broker is not the leader
-		if resp.StatusCode == http.StatusTemporaryRedirect {
+		// if resp.StatusCode == http.StatusTemporaryRedirect {
+		// 	continue
+		// }
+
+		// response from Follower
+		if resp.StatusCode == http.StatusForbidden {
 			continue
 		}
 
