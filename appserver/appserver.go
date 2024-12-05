@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -122,7 +123,12 @@ func (s *AppServer) sendHTTPMessage(msg Message) {
 				log.Printf("Error sending message to broker %s: %v", addr, err)
 				return
 			}
-			defer resp.Body.Close()
+			defer func(Body io.ReadCloser) {
+				err := Body.Close()
+				if err != nil {
+					log.Printf("Error closing body: %v", err)
+				}
+			}(resp.Body)
 		}(url, jsonData)
 	}
 }
