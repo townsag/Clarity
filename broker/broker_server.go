@@ -1,6 +1,7 @@
 package broker
 
-// gonna move a bunch of shit to the consensus.go file
+// when doing http stuff
+// use rm.Submit(document, crdt) to add entry
 
 import (
 	"encoding/json"
