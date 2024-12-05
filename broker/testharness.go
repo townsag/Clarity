@@ -246,6 +246,50 @@ func (h *Harness) CheckNoLeader() {
 	}
 }
 
+func (h *Harness) CompareCommittedLogs() {
+	h.t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Check that all connected servers have the same length of committedLogs
+	commitsLen := -1
+	for i := 0; i < h.n; i++ {
+		if h.connected[i] {
+			if commitsLen >= 0 {
+				// If the lengths don't match, fail the test
+				if len(h.commits[i]) != commitsLen {
+					h.t.Fatalf("commits[%d] has length %d, but commits[%d] has length %d", i, commitsLen, i, len(h.commits[i]))
+				}
+			} else {
+				commitsLen = len(h.commits[i])
+			}
+		}
+	}
+
+	// Now compare the committedLog entries across all servers
+	for i := 0; i < h.n; i++ {
+		if h.connected[i] {
+			for c := 0; c < commitsLen; c++ {
+				// Compare CRDTOperation and Index of each log entry
+				operation := h.commits[i][c].CRDTOperation
+				index := h.commits[i][c].Index
+
+				for j := 0; j < h.n; j++ {
+					if i != j && h.connected[j] {
+						// If any entry differs between servers, log the error
+						if h.commits[j][c].CRDTOperation != operation {
+							h.t.Errorf("commits[%d][%d].CRDTOperation mismatch: got %v, want %v", j, c, h.commits[j][c].CRDTOperation, operation)
+						}
+						if h.commits[j][c].Index != index {
+							h.t.Errorf("commits[%d][%d].Index mismatch: got %d, want %d", j, c, h.commits[j][c].Index, index)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func (h *Harness) CheckCommitted(cmd int) (nc int, index int) {
 	h.t.Helper()
 	h.mu.Lock()

@@ -99,7 +99,7 @@ func TestCommitOneCommand(t *testing.T) {
 	}
 
 	sleepMs(500)
-	//h.CheckCommittedN(42, 5)
+	h.CompareCommittedLogs()
 
 	// log, commitIndex, logLen := h.GetLogAndCommitIndexFromServer(origLeaderId)
 	// tlog("Leader %d CommitIndex: %d   log: %+v   idx of latest entry: %d ", origLeaderId, commitIndex, log, logLen-1)
@@ -129,19 +129,9 @@ func TestCommitMultipleCommands(t *testing.T) {
 	}
 
 	sleepMs(250)
-	// nc, i1 := h.CheckCommitted(42)
-	// _, i2 := h.CheckCommitted(55)
-	// if nc != 3 {
-	// 	t.Errorf("want nc=3, got %d", nc)
-	// }
-	// if i1 >= i2 {
-	// 	t.Errorf("want i1<i2, got i1=%d i2=%d", i1, i2)
-	// }
 
-	// _, i3 := h.CheckCommitted(81)
-	// if i2 >= i3 {
-	// 	t.Errorf("want i2<i3, got i2=%d i3=%d", i2, i3)
-	// }
+	// compare logs across server to make sure they are identical
+	h.CompareCommittedLogs()
 
 	// log, commitIndex, logLen := h.GetLogAndCommitIndexFromServer(origLeaderId)
 	// tlog("Leader %d CommitIndex: %d   log: %+v   idx of latest entry: %d ", origLeaderId, commitIndex, log, logLen-1)

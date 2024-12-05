@@ -232,7 +232,13 @@ func (rm *ReplicationModule) commitChanSender() {
 		savedLastApplied := rm.lastApplied
 
 		var entries []LogEntry
-		if rm.commitIndex > rm.lastApplied {
+		//log.Printf("in commitChanSender lastApplied: %d   commitIndex: %d", rm.lastApplied, rm.commitIndex)
+
+		// handle base case for first commit
+		if rm.commitIndex == 0 {
+			entries = rm.log[rm.lastApplied : rm.commitIndex+1]
+			rm.lastApplied = rm.commitIndex
+		} else if rm.commitIndex > rm.lastApplied { // standard for subsequent commits
 			entries = rm.log[rm.lastApplied+1 : rm.commitIndex+1]
 			rm.lastApplied = rm.commitIndex
 		}
