@@ -1,6 +1,9 @@
 package appserver
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -13,6 +16,7 @@ type AppServer struct {
 	mu       sync.Mutex
 	upgrader websocket.Upgrader
 	clients  map[*websocket.Conn]bool
+	brokers  []string
 	textCRDT *crdt.TextCRDT
 }
 
@@ -22,9 +26,10 @@ type Message struct {
 	Value     interface{} `json:"value"`
 	ReplicaID string      `json:"replica_id"`
 	OpIndex   int64       `json:"operation_index"`
+	Source    string      `json:"source"` // "client" or "broker"
 }
 
-func NewAppServer(replicaID string) *AppServer {
+func NewAppServer(replicaID string, brokerList []string) *AppServer {
 	return &AppServer{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -34,6 +39,7 @@ func NewAppServer(replicaID string) *AppServer {
 			},
 		},
 		clients:  make(map[*websocket.Conn]bool),
+		brokers:  brokerList,
 		textCRDT: crdt.NewTextCRDT(replicaID),
 	}
 }
@@ -44,10 +50,11 @@ func (s *AppServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
+
 	defer func(conn *websocket.Conn) {
 		err := conn.Close()
 		if err != nil {
-			// do i need to add anything here ??
+			log.Printf("Error closing connection: %v", err)
 		}
 	}(conn)
 
@@ -66,7 +73,17 @@ func (s *AppServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		s.handleOperation(msg)
+		switch msg.Source {
+		case "client":
+			// Forward the message directly to broker
+			s.sendHTTPMessage(msg)
+			// Update local CRDT and broadcast to other clients
+			s.handleOperation(msg)
+
+		case "broker":
+			// Update local CRDT state and broadcast to clients
+			s.handleOperation(msg)
+		}
 	}
 }
 
@@ -88,6 +105,26 @@ func (s *AppServer) handleOperation(msg Message) {
 
 	// Broadcast operation to all clients
 	s.broadcastOperation(operation)
+}
+
+func (s *AppServer) sendHTTPMessage(msg Message) {
+	for _, brokerAddr := range s.brokers {
+		url := fmt.Sprintf("http://%s/crdt", brokerAddr)
+		jsonData, err := json.Marshal(msg)
+		if err != nil {
+			log.Printf("Error marshaling message for broker %s: %v", brokerAddr, err)
+			continue
+		}
+
+		go func(addr string, data []byte) {
+			resp, err := http.Post(addr, "application/json", bytes.NewBuffer(data))
+			if err != nil {
+				log.Printf("Error sending message to broker %s: %v", addr, err)
+				return
+			}
+			defer resp.Body.Close()
+		}(url, jsonData)
+	}
 }
 
 func (s *AppServer) broadcastOperation(op crdt.Operation) {
