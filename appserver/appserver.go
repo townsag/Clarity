@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"clarity/crdt"
 
@@ -132,6 +133,57 @@ func (s *AppServer) sendHTTPMessage(msg Message) {
 			}(resp.Body)
 		}(url, jsonData)
 	}
+}
+
+func (s *AppServer) requestCRDTLogs() error {
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: time.Second * 10,
+	}
+
+	for _, brokerAddr := range s.brokers {
+		url := fmt.Sprintf("http://%s/logs", brokerAddr)
+
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			log.Printf("Error creating request for broker %s: %v", brokerAddr, err)
+			continue
+		}
+
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Error requesting logs from broker %s: %v", brokerAddr, err)
+			continue
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
+			if err != nil {
+				log.Printf("Error closing body: %v", err)
+			}
+		}(resp.Body)
+
+		// If we get a redirect, the broker is not the leader
+		if resp.StatusCode == http.StatusTemporaryRedirect {
+			continue
+		}
+
+		// If we successfully get logs from the leader
+		if resp.StatusCode == http.StatusOK {
+			var operations []crdt.Operation
+			if err := json.NewDecoder(resp.Body).Decode(&operations); err != nil {
+				return fmt.Errorf("error decoding log response: %v", err)
+			}
+
+			// Apply operations to local CRDT
+			s.mu.Lock()
+			for _, op := range operations {
+				s.textCRDT.Apply(op)
+			}
+			s.mu.Unlock()
+			return nil
+		}
+	}
+	return fmt.Errorf("failed to get logs from any broker")
 }
 
 func (s *AppServer) broadcastOperation(op crdt.Operation) {
