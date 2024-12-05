@@ -83,13 +83,14 @@ type BrokerServer struct {
 
 // i think we can just hardcode initialize one server as leader when we start up the cluster?
 // ready <-chan any is for make sure everything starts are the same time when close(ready) in whatever starting the servers
-func NewBrokerServer(brokerid int, peerIds []int, peerAddrs map[int]string, httpAddr string, state ServerState, ready <-chan any) *BrokerServer {
+func NewBrokerServer(brokerid int, peerIds []int, peerAddrs map[int]string, httpAddr string, state ServerState, ready <-chan any, commitChan chan<- CommitEntry) *BrokerServer {
 	broker := new(BrokerServer)
 	broker.brokerid = brokerid
 	broker.peerIds = peerIds
 	broker.peerClients = make(map[int]*rpc.Client)
 	broker.state = state
 	broker.ready = ready
+	broker.commitChan = commitChan
 	broker.quit = make(chan any)
 	broker.peerAddrs = peerAddrs
 	broker.httpAddr = httpAddr

@@ -75,7 +75,7 @@ func NewHarness(t *testing.T, n int) *Harness {
 		// }
 
 		commitChans[i] = make(chan CommitEntry)
-		ns[i] = NewBrokerServer(i, peerIds, peerAddrs, peerAddrs[i], Follower, ready /*,commitChans[i]*/)
+		ns[i] = NewBrokerServer(i, peerIds, peerAddrs, peerAddrs[i], Follower, ready, commitChans[i])
 		ns[i].Serve()
 		alive[i] = true
 
@@ -182,7 +182,7 @@ func (h *Harness) RestartPeer(id int) {
 	}
 
 	ready := make(chan any)
-	h.cluster[id] = NewBrokerServer(id, peerIds, h.peerAddrs, h.peerAddrs[id], Follower, ready /*,h.commitChans[i]*/)
+	h.cluster[id] = NewBrokerServer(id, peerIds, h.peerAddrs, h.peerAddrs[id], Follower, ready, h.commitChans[id])
 	h.cluster[id].Serve()
 	h.ReconnectPeer(id)
 	close(ready)
@@ -326,8 +326,8 @@ func (h *Harness) CheckNotCommitted(cmd int) {
 	}
 }
 
-func (h *Harness) SubmitToServer(serverId int, cmd any) int {
-	return h.cluster[serverId].rm.Submit(cmd)
+func (h *Harness) SubmitToServer(serverId int, document string, cmd any) int {
+	return h.cluster[serverId].rm.Submit(document, cmd)
 }
 
 func tlog(format string, a ...any) {
@@ -348,9 +348,9 @@ func (h *Harness) collectCommits(i int) {
 	}
 }
 
-func (h *Harness) GetLogAndCommitIndexFromServer(serverId int) ([]LogEntry, int, int) {
+func (h *Harness) GetLogsAndCommitIndexFromServer(serverId int) ([]LogEntry, []LogEntry, int, int) {
 	server := h.cluster[serverId]
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	return server.rm.log, server.rm.commitIndex, len(server.rm.log)
+	return server.rm.log, server.rm.committedLog, server.rm.commitIndex, len(server.rm.log)
 }

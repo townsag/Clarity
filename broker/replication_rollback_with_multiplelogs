@@ -1,0 +1,427 @@
+package broker
+
+import (
+	"log"
+)
+
+// basically if leader. rpc new log entries to followers and wait for responses the send commit
+// if follower when getting an update, send ready message then wait for commit message
+
+//"sync"
+
+type CommitEntry struct {
+	CRDTOperation any
+	//CRDTOperation int
+
+	Index int
+
+	Term int
+}
+
+type LogEntry struct {
+	// crdtOperation int
+
+	CRDTOperation any
+	Term          int
+}
+
+type ReplicationModule struct {
+	//mu sync.Mutex	// probably retire for the shared lock in brokerserver
+
+	broker *BrokerServer
+
+	// id of connected server
+	id int
+
+	peerIds []int
+
+	// working log structure to handle uncommitted appends
+	// log []LogEntry
+	logs map[string][]LogEntry
+
+	// storage for committed entries
+	committedLogs map[string][]CommitEntry
+
+	commitIndexes map[string]int
+
+	commitChan chan<- CommitEntry
+
+	// channel to coordiate commits
+	// added to in leaderSendAEs and AppendEntries
+	// consumed in commitChanSender
+	newCommitReadyChan chan struct{}
+
+	// AE stands for appendentry. used also for heartbeat
+	triggerAEChan chan struct{}
+
+	lastApplied int
+}
+
+func NewRM(id int, peerIds []int, broker *BrokerServer, commitChan chan<- CommitEntry) *ReplicationModule {
+
+	rm := new(ReplicationModule)
+
+	rm.broker = broker
+	rm.id = id
+	rm.peerIds = peerIds
+	rm.commitIndexes = make(map[string]int)
+
+	rm.commitChan = commitChan
+
+	// channels are like temporary storage that will be consumed by some function
+
+	// 16 is buffer size. it means that 16 notifs can be held in channe;
+	rm.newCommitReadyChan = make(chan struct{}, 16)
+
+	// 1 ensures only 1 AppendEntry is pending
+	rm.triggerAEChan = make(chan struct{}, 1)
+
+	rm.logs = make(map[string][]LogEntry)
+	rm.committedLogs = make(map[string][]CommitEntry)
+
+	go rm.commitChanSender()
+
+	return rm
+}
+
+// main function for leader to send AppendEntry commands to followers
+// also used in election.go for heartbeat
+func (rm *ReplicationModule) leaderSendAEs() {
+	rm.broker.mu2.Lock()
+
+	// if broker is not leader. don't let it send AppendEntries
+	if rm.broker.state != Leader {
+		rm.broker.mu2.Unlock()
+		return
+	}
+
+	currentTerm := rm.broker.em.term
+	rm.broker.mu2.Unlock()
+
+	for _, peerId := range rm.peerIds {
+
+		for doc, logEntries := range rm.logs {
+			// get the most recent index of the leader's log
+			// replication for followers will start from there
+			go func(doc string, logEntries []LogEntry, peerId int) {
+				rm.broker.mu2.Lock()
+				nextIndex := rm.broker.em.nextIndex[peerId]
+
+				prevLogIndex := nextIndex - 1
+				prevLogTerm := -1
+
+				if prevLogIndex >= 0 {
+					prevLogTerm = rm.logs[doc][prevLogIndex].Term
+				}
+				entries := logEntries[nextIndex:]
+
+				args := AppendEntriesArgs{
+					Term:         currentTerm,
+					LeaderId:     rm.id,
+					PrevLogIndex: prevLogIndex,
+					PrevLogTerm:  prevLogTerm,
+					Entries:      entries,
+					LeaderCommit: rm.commitIndexes[doc],
+				}
+				rm.broker.mu2.Unlock()
+
+				log.Printf("%d sending AE Call to %d: %+v", rm.id, peerId, args)
+
+				var reply AppendEntriesReply
+				if err := rm.broker.Call(peerId, "ReplicationModule.AppendEntries", args, &reply); err == nil {
+					log.Printf("%s %d receives AE reply from %d", rm.broker.state, rm.id, reply.Id)
+					rm.broker.mu2.Lock()
+
+					// if it detects through heartbeat that own term is out of date, become follower
+					if reply.Term > rm.broker.em.term {
+						log.Printf("leader %d's term is outdated", rm.id)
+						rm.broker.em.becomeFollower(reply.Term)
+						rm.broker.mu2.Unlock()
+						return
+					}
+
+					// if broker is leader and it's term is up to date
+					if rm.broker.state == Leader && currentTerm == reply.Term {
+						if reply.Success {
+							log.Printf("%d replies successful append for document %s", reply.Id, doc)
+							rm.broker.em.nextIndex[peerId] = nextIndex + len(entries)
+							rm.broker.em.matchIndex[peerId] = rm.broker.em.nextIndex[peerId] - 1
+
+							// get replies from followers to decide whether or not to send commit
+							savedCommitIndex := rm.commitIndexes[doc]
+							for i := rm.commitIndexes[doc] + 1; i < len(rm.logs[doc]); i++ {
+								if rm.logs[doc][i].Term == rm.broker.em.term {
+									matches := 1
+									for _, peerId := range rm.peerIds {
+										if rm.broker.em.matchIndex[peerId] >= i {
+											log.Printf("%d is ready to commit", peerId)
+											matches++
+										}
+									}
+									// currently set to atomic. raft does majority
+									// if matches*2 > len(rm.peerIds)+1
+									if matches == len(rm.peerIds) {
+										log.Printf("all followers ready to commit, %s %d updates commitIndex to %d", rm.broker.state, rm.id, i)
+										rm.commitIndexes[doc] = i
+									}
+								}
+
+							}
+							// notify followers of commit
+							if rm.commitIndexes[doc] != savedCommitIndex {
+								rm.broker.mu2.Unlock()
+								rm.newCommitReadyChan <- struct{}{}
+								rm.triggerAEChan <- struct{}{}
+							} else {
+								rm.broker.mu2.Unlock()
+							}
+
+						} else { // if reply.success = false
+							if reply.ConflictTerm >= 0 {
+								lastIndexOfTerm := -1
+								for i := len(rm.logs[doc]) - 1; i >= 0; i-- {
+									if rm.logs[doc][i].Term == reply.ConflictTerm {
+										lastIndexOfTerm = i
+										break
+									}
+								}
+
+								if lastIndexOfTerm >= 0 {
+									rm.broker.em.nextIndex[peerId] = lastIndexOfTerm + 1
+								} else {
+									rm.broker.em.nextIndex[peerId] = reply.ConflictIndex
+								}
+							} else {
+								rm.broker.em.nextIndex[peerId] = reply.ConflictIndex
+							}
+
+							//rm.broker.mu2.Unlock() //<-- why is this here
+						}
+
+					} else {
+						rm.broker.mu2.Unlock()
+					}
+
+				}
+
+			}(doc, logEntries, peerId)
+		}
+
+	}
+
+}
+
+// func (rm *ReplicationModule) commitChanSender() {
+// 	for range rm.newCommitReadyChan {
+// 		rm.broker.mu2.Lock()
+// 		savedTerm := rm.broker.em.term
+// 		savedLastApplied := rm.lastApplied
+
+// 		var entries []LogEntry
+// 		if rm.commitIndex > rm.lastApplied {
+// 			entries = rm.log[rm.lastApplied+1 : rm.commitIndex+1]
+// 			rm.lastApplied = rm.commitIndex
+// 		}
+// 		rm.broker.mu2.Unlock()
+
+// 		for i, entry := range entries {
+// 			rm.commitChan <- CommitEntry{
+// 				CRDTOperation: entry.CRDTOperation,
+// 				Index:         savedLastApplied + i + 1,
+// 				Term:          savedTerm,
+// 			}
+// 			log.Printf("%+v committed to log", entry.CRDTOperation)
+// 		}
+// 	}
+// }
+
+func (rm *ReplicationModule) commitChanSender() {
+	for range rm.newCommitReadyChan {
+		rm.broker.mu2.Lock()
+		savedTerm := rm.broker.em.term
+
+		for doc, logEntries := range rm.logs {
+
+			// if corresponding commitIndex to doc doesn't exist, create new index
+			lastCommittedIndex, exists := rm.commitIndexes[doc]
+			if !exists {
+				lastCommittedIndex = -1
+			}
+
+			// if corresponding commitLog to doc doesn't exist, create new commitLog
+			if _, exists := rm.committedLogs[doc]; !exists {
+				rm.committedLogs[doc] = []CommitEntry{}
+			}
+
+			commitIndex := len(rm.committedLogs[doc])
+
+			if commitIndex > lastCommittedIndex {
+				entries := logEntries[lastCommittedIndex+1 : commitIndex+1]
+				rm.commitIndexes[doc] = commitIndex
+
+				rm.broker.mu2.Unlock()
+
+				// commit entries
+				for i, entry := range entries {
+					commitEntry := CommitEntry{
+						CRDTOperation: entry.CRDTOperation,
+						Index:         lastCommittedIndex + i + 1,
+						Term:          savedTerm,
+					}
+
+					rm.committedLogs[doc] = append(rm.committedLogs[doc], commitEntry)
+					rm.commitChan <- commitEntry
+					log.Printf("%s %d committed entry for document %d at index %d: %+v", rm.broker.state, rm.id, doc, commitEntry.Index, entry.CRDTOperation)
+				}
+				rm.broker.mu2.Lock()
+			}
+
+		}
+		rm.broker.mu2.Unlock()
+	}
+}
+
+// rpc request from leader to follower
+// handles both heartbeat and actual log entries
+type AppendEntriesArgs struct {
+	Term     int
+	LeaderId int
+
+	PrevLogIndex int
+	PrevLogTerm  int
+
+	Entries []LogEntry
+	Docname string
+
+	LeaderCommit int
+}
+
+// rpc reply from follower to leader
+type AppendEntriesReply struct {
+	Term    int
+	Success bool
+	Id      int
+
+	// idk if these are necessary so remove if unused
+	ConflictIndex int
+	ConflictTerm  int
+}
+
+// this func is primarily for followers to accept replication from leader
+func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
+	log.Printf("%s %d received AE from %d: %+v", rm.broker.state, rm.id, args.LeaderId, args)
+	rm.broker.mu2.Lock()
+	defer rm.broker.mu2.Unlock()
+
+	// if log for Docname doesnt exist create new log
+	if _, exists := rm.logs[args.Docname]; !exists {
+		rm.logs[args.Docname] = []LogEntry{}
+	}
+	// same for committedLogs
+	if _, exists := rm.committedLogs[args.Docname]; !exists {
+		rm.committedLogs[args.Docname] = []CommitEntry{}
+	}
+
+	correctLog := rm.logs[args.Docname]
+
+	// if log entry to append has higher term. become follower
+	if args.Term > rm.broker.em.term {
+		rm.broker.em.becomeFollower(args.Term)
+	}
+
+	reply.Success = false
+
+	if args.Term == rm.broker.em.term {
+		if rm.broker.state != Follower {
+			rm.broker.em.becomeFollower(args.Term)
+		}
+		log.Printf("%s %d detects heartbeat or command from leaderid %d", rm.broker.state, rm.id, args.LeaderId)
+		//rm.broker.em.electionResetEvent = time.Now()
+		rm.broker.em.resetElectionTimer()
+
+		// check if follower log contains previous entry (correct term and index)
+		if args.PrevLogIndex == -1 || (args.PrevLogIndex < len(correctLog) && args.PrevLogIndex == correctLog[args.PrevLogIndex].Term) {
+			reply.Success = true
+
+			logInsertIndex := args.PrevLogIndex + 1
+			newEntriesIndex := 0
+
+			// loop through log entries sent from leader to see where to start inserting
+			for {
+				// end of follower log reached meaning log is either shorter and must be appended upon
+				// or follower log is up to date
+				if logInsertIndex >= len(correctLog) || newEntriesIndex >= len(args.Entries) {
+					break
+				}
+				// mismatch found, start appending from this index
+				if correctLog[logInsertIndex].Term != args.Entries[newEntriesIndex].Term {
+					break
+				}
+				logInsertIndex++
+				newEntriesIndex++
+			}
+
+			// append missing entries to follower log
+			if newEntriesIndex < len(args.Entries) {
+				rm.logs[args.Docname] = append(correctLog[:logInsertIndex], args.Entries[newEntriesIndex:]...)
+				log.Printf("%+v appended from index %d for term %d", args.Entries, newEntriesIndex, rm.logs[args.Docname][newEntriesIndex].Term)
+			}
+
+			if args.LeaderCommit > rm.commitIndexes[args.Docname] {
+				rm.commitIndexes[args.Docname] = min(args.LeaderCommit, len(rm.logs[args.Docname])-1)
+				rm.newCommitReadyChan <- struct{}{}
+			}
+
+		} else {
+			if args.PrevLogIndex >= len(correctLog) {
+				reply.ConflictIndex = len(correctLog)
+				reply.ConflictTerm = -1
+			} else {
+				reply.ConflictTerm = correctLog[args.PrevLogIndex].Term
+
+				var i int
+				for i = args.PrevLogIndex - 1; i >= 0; i-- {
+					if correctLog[i].Term != reply.ConflictTerm {
+						break
+					}
+				}
+				reply.ConflictIndex = i + 1
+			}
+		}
+	}
+
+	reply.Term = rm.broker.em.term
+	reply.Id = rm.id
+	// storage is for crashes. we will probably pull from db if we end up having enough time.
+	//rm.persistToStorage()
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////
+//THESE FUNCS ARE FOR TESTING AND DEPLOYMENT
+////////////////////////////////////////////////////////////////////
+
+func (rm *ReplicationModule) Submit(document string, command any) int {
+	rm.broker.mu2.Lock()
+	defer rm.broker.mu2.Unlock()
+
+	if rm.broker.state == Leader {
+
+		// if log of document doesn't exist create new log
+		if _, exists := rm.logs[document]; !exists {
+			rm.logs[document] = []LogEntry{}
+			rm.commitIndexes[document] = -1
+		}
+
+		submitIndex := len(rm.logs[document])
+		rm.logs[document] = append(rm.logs[document], LogEntry{CRDTOperation: command, Term: rm.broker.em.term})
+		//rm.persistToStorage()
+		log.Printf("%s %d Submits entry to document {%s} at index %d: %+v", rm.broker.state, rm.id, document, submitIndex, command)
+
+		rm.triggerAEChan <- struct{}{}
+		return submitIndex
+	}
+
+	log.Printf("%d is not Leader. Log Submit fails", rm.id)
+	return -1
+}
