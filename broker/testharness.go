@@ -398,3 +398,8 @@ func (h *Harness) GetLogsAndCommitIndexFromServer(serverId int) ([]LogEntry, []L
 	defer server.mu.Unlock()
 	return server.rm.log, server.rm.committedLog, server.rm.commitIndex, len(server.rm.log)
 }
+
+// expose broker server cluster to appserver
+func (h *Harness) Cluster() []*BrokerServer {
+	return h.cluster
+}
