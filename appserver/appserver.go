@@ -175,17 +175,23 @@ func (s *AppServer) requestCRDTLogs() error {
 
 		// If we successfully get logs from the leader
 		if resp.StatusCode == http.StatusOK {
-			var operations []crdt.Operation
-			if err := json.NewDecoder(resp.Body).Decode(&operations); err != nil {
-				return fmt.Errorf("error decoding log response: %v", err)
-			}
+			// var operations []crdt.Operation
+			// if err := json.NewDecoder(resp.Body).Decode(&operations); err != nil {
+			// 	return fmt.Errorf("error decoding log response: %v", err)
+			// }
 
-			// Apply operations to local CRDT
-			s.mu.Lock()
-			for _, op := range operations {
-				s.textCRDT.Apply(op)
+			// // Apply operations to local CRDT
+			// s.mu.Lock()
+			// for _, op := range operations {
+			// 	s.textCRDT.Apply(op)
+			// }
+			// s.mu.Unlock()
+			// return nil
+			bodyBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("error reading response body: %v", err)
 			}
-			s.mu.Unlock()
+			log.Printf("appserver receives {%s} from broker", string(bodyBytes))
 			return nil
 		}
 	}

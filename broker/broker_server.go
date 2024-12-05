@@ -109,7 +109,7 @@ type CRDTMessage struct { // Type, Index, Value combine to create crdt operation
 }
 
 // http func to recieve crdts
-func (broker *BrokerServer) handleCRTDOperation(w http.ResponseWriter, r *http.Request) {
+func (broker *BrokerServer) handleCRDTOperation(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method != http.MethodPost {
 		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
@@ -134,8 +134,8 @@ func (broker *BrokerServer) handleCRTDOperation(w http.ResponseWriter, r *http.R
 
 	log.Printf("%s %d Received CRDT Message: %+v", broker.state, broker.brokerid, crdtMessage)
 
-	broker.mu2.Lock()
-	defer broker.mu.Unlock()
+	// broker.mu2.Lock()
+	// defer broker.mu2.Unlock()
 
 	// leader builds crdt operation log and submits to ReplicationModule for log replication and committing
 	crdtOp := fmt.Sprintf("Type[%s] Index[%d] Value[%+v]", crdtMessage.Type, crdtMessage.Index, crdtMessage.Value)
@@ -169,12 +169,18 @@ func (broker *BrokerServer) handleLogGetRequest(w http.ResponseWriter, r *http.R
 
 	// get and send logs
 	sendlogs := broker.rm.log
-	logString := fmt.Sprintf("%v", sendlogs)
+	var sendlogslist []string
+
+	for _, entry := range sendlogs {
+		logString := fmt.Sprintf("Operation: %+v  Document: %s  Term: %d", entry.CRDTOperation, entry.Document, entry.Term)
+		sendlogslist = append(sendlogslist, logString)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(logString); err != nil {
+	if err := json.NewEncoder(w).Encode(sendlogslist); err != nil {
 		http.Error(w, fmt.Sprintf("Error encoding logs: %v", err), http.StatusInternalServerError)
 	}
-	log.Printf("%s %d sends logs %s to appserver", broker.state, broker.brokerid, logString)
+	log.Printf("%s %d sends logs %s to appserver", broker.state, broker.brokerid, sendlogslist)
 
 }
 
@@ -204,7 +210,7 @@ func (broker *BrokerServer) Serve() {
 	mux := http.NewServeMux()
 
 	// func for handling incoming crdt Messages from application server
-	mux.HandleFunc("/crdt", broker.handleCRTDOperation)
+	mux.HandleFunc("/crdt", broker.handleCRDTOperation)
 
 	// func for handling incoming log request from application server
 	mux.HandleFunc("/logrequest", broker.handleLogGetRequest)
