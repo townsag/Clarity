@@ -169,8 +169,9 @@ func (broker *BrokerServer) handleLogGetRequest(w http.ResponseWriter, r *http.R
 
 	// get and send logs
 	sendlogs := broker.rm.log
+	logString := fmt.Sprintf("%v", sendlogs)
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(sendlogs); err != nil {
+	if err := json.NewEncoder(w).Encode(logString); err != nil {
 		http.Error(w, fmt.Sprintf("Error encoding logs: %v", err), http.StatusInternalServerError)
 	}
 

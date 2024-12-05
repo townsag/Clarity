@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"clarity/crdt"
+	"github.com/townsag/clarity/crdt"
 
 	"github.com/gorilla/websocket"
 )
@@ -135,6 +135,7 @@ func (s *AppServer) sendHTTPMessage(msg Message) {
 	}
 }
 
+// for testing at this point
 func (s *AppServer) requestCRDTLogs() error {
 	// Create HTTP client with timeout
 	client := &http.Client{
