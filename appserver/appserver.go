@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"clarity/crdt"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -21,13 +22,13 @@ type AppServer struct {
 	textCRDT *crdt.TextCRDT
 }
 
-type Message struct {
-	Type      string      `json:"type"`
-	Index     int64       `json:"index"`
-	Value     interface{} `json:"value"`
+type Message struct { // Type, Index, Value combine to create crdt operation
+	Type      string      `json:"type"`  // the crdt operation type {insert, delete}
+	Index     int64       `json:"index"` // index of the operation
+	Value     interface{} `json:"value"` // chars being inserted / deleted
 	ReplicaID string      `json:"replica_id"`
-	OpIndex   int64       `json:"operation_index"`
-	Source    string      `json:"source"` // "client" or "broker"
+	OpIndex   int64       `json:"operation_index"` // identifies the document the crdt operations edit
+	Source    string      `json:"source"`          // "client" or "broker"
 }
 
 func NewAppServer(replicaID string, brokerList []string) *AppServer {

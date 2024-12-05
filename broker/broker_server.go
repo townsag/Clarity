@@ -99,26 +99,13 @@ func NewBrokerServer(brokerid int, peerIds []int, peerAddrs map[int]string, http
 	return broker
 }
 
-// Broker Server's main routine
-// each broker must:
-//
-//	If leader:
-//		recieve CRDT operations from application server/s
-//		update own log and send update to followers
-//		make sure enough followers recieved update then tell all followers to commit
-//		heartbeat to followers and application servers
-//		handle application server polls and respond with the correct log
-//	if follower:
-//		handle application server polls and respond with the correct log
-//		maintain consistency with leader
-//		maintain timeout to elect new leader of leader is dead (no heartbeat)
-//
-
-// subject to change to fit what crdt looks like
-type CRDTOperation struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
-	Value any    `json:"value"`
+type CRDTMessage struct { // Type, Index, Value combine to create crdt operation
+	Type      string      `json:"type"`  // the crdt operation type {insert, delete}
+	Index     int64       `json:"index"` // index of the operation
+	Value     interface{} `json:"value"` // chars being inserted / deleted
+	ReplicaID string      `json:"replica_id"`
+	OpIndex   int64       `json:"operation_index"` // identifies the document the crdt operations edit
+	Source    string      `json:"source"`          // "client" or "broker"
 }
 
 // http receive to recieve crdts
@@ -129,36 +116,35 @@ func (broker *BrokerServer) handleCRTDOperation(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	broker.mu.Lock()
-	leaderAddr := broker.em.GetLeaderAddr()
-	broker.mu.Unlock()
-
 	// check first is this broker is leader
+	// since our implementation of the appserver multicasts to all nodes
+	// when follower recieves message, just ignore
 	if broker.state != Leader {
-		log.Printf("%d Rejecting CRDT operation: Not the leader", broker.brokerid)
-		w.Header().Set("Location", leaderAddr) // Redirect to the leader's address
-		http.Error(w, "This server is not the leader", http.StatusTemporaryRedirect)
+		log.Printf("%s %d ignores CRDT message: Not the leader", broker.state, broker.brokerid) // Redirect to the leader's address
+		http.Error(w, "This server is not the leader", http.StatusForbidden)
 		return
 	}
 
-	var op CRDTOperation
-	err := json.NewDecoder(r.Body).Decode(&op)
+	var crdtMessage CRDTMessage
+	err := json.NewDecoder(r.Body).Decode(&crdtMessage)
 	if err != nil {
 		http.Error(w, "Invalid CRDT operation payload", http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("[%d] Received CRDT operation: %+v", broker.brokerid, op)
+	log.Printf("[%d] Received CRDT Message: %+v", broker.brokerid, crdtMessage)
 
 	broker.mu2.Lock()
 	defer broker.mu.Unlock()
 
-	// leader tries to append
-	// err = broker.rm.AppendCRDTOperation(op)
-	// if err != nil {
-	// 	http.Error(w, "Failed to append operation to Raft log", http.StatusInternalServerError)
-	// 	return
-	// }
+	// leader builds crdt operation log and submits to ReplicationModule for log replication and committing
+	crdtOp := fmt.Sprintf("Type[%s] Index[%d] Value[%+v]", crdtMessage.Type, crdtMessage.Index, crdtMessage.Value)
+	documentName := fmt.Sprintf("%d", crdtMessage.OpIndex)
+
+	// submit CRDT Operation to RM
+	broker.rm.Submit(documentName, crdtOp)
+
+	log.Printf("%s %d Submits entry %s for document %s", broker.state, broker.brokerid, crdtOp, documentName)
 
 	w.WriteHeader(http.StatusAccepted)
 	w.Write([]byte("CRDT operation accepted"))
