@@ -132,7 +132,7 @@ func (broker *BrokerServer) handleCRTDOperation(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	log.Printf("[%d] Received CRDT Message: %+v", broker.brokerid, crdtMessage)
+	log.Printf("%s %d Received CRDT Message: %+v", broker.state, broker.brokerid, crdtMessage)
 
 	broker.mu2.Lock()
 	defer broker.mu.Unlock()
@@ -174,6 +174,7 @@ func (broker *BrokerServer) handleLogGetRequest(w http.ResponseWriter, r *http.R
 	if err := json.NewEncoder(w).Encode(logString); err != nil {
 		http.Error(w, fmt.Sprintf("Error encoding logs: %v", err), http.StatusInternalServerError)
 	}
+	log.Printf("%s %d sends logs %s to appserver", broker.state, broker.brokerid, logString)
 
 }
 
@@ -339,4 +340,10 @@ func (broker *BrokerServer) GetListenAddr() net.Addr {
 	broker.mu.Lock()
 	defer broker.mu.Unlock()
 	return broker.listener.Addr()
+}
+
+func (broker *BrokerServer) GetHTTPAddr() string {
+	broker.mu.Lock()
+	defer broker.mu.Unlock()
+	return broker.httpAddr
 }

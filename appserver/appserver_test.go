@@ -18,7 +18,7 @@ func TestHandleWebSocket(t *testing.T) {
 	// Setup the AppServer
 	brokerAddrs := make([]string, len(h.Cluster()))
 	for i, broker := range h.Cluster() {
-		brokerAddrs[i] = broker.GetListenAddr().String()
+		brokerAddrs[i] = broker.GetHTTPAddr()
 	}
 
 	// set up app server
