@@ -1,5 +1,7 @@
 package main
 
+// main is pretty much unused
+
 import (
 	"fmt"
 

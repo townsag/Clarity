@@ -163,7 +163,7 @@ func (s *AppServer) requestCRDTLogs() error {
 			}
 		}(resp.Body)
 
-		// If we get a redirect, the broker is not the leader
+		// If we get a redirect, the broker is not the leader   <-- didn't have time to implement
 		// if resp.StatusCode == http.StatusTemporaryRedirect {
 		// 	continue
 		// }
@@ -175,6 +175,10 @@ func (s *AppServer) requestCRDTLogs() error {
 
 		// If we successfully get logs from the leader
 		if resp.StatusCode == http.StatusOK {
+
+			//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			// what this would have done is taken the logs obtained from the brokers to apply crdt to the text. but we ran out of time
+			//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 			// var operations []crdt.Operation
 			// if err := json.NewDecoder(resp.Body).Decode(&operations); err != nil {
 			// 	return fmt.Errorf("error decoding log response: %v", err)
@@ -187,6 +191,7 @@ func (s *AppServer) requestCRDTLogs() error {
 			// }
 			// s.mu.Unlock()
 			// return nil
+
 			bodyBytes, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return fmt.Errorf("error reading response body: %v", err)

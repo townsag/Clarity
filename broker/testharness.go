@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// copy exactly from github first then mold to fit my raft
-// missing funcs need to be implemented in brokerserver.go, election.go, replication.go
+// testharness basically taken from tutorial github and changed
 
 func init() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
@@ -20,7 +19,6 @@ type Harness struct {
 
 	// cluster holds the raftnodes
 	cluster []*BrokerServer
-	// storage []*MapStorage
 
 	commitChans []chan CommitEntry
 
@@ -59,20 +57,6 @@ func NewHarness(t *testing.T, n int) *Harness {
 				peerIds = append(peerIds, p)
 			}
 		}
-
-		//pre initialize one node as leader
-		// if i == 0 {
-		// 	commitChans[i] = make(chan CommitEntry)
-		// 	ns[i] = NewBrokerServer(i, peerIds, Leader, ready /*,commitChans[i]*/)
-		// 	ns[i].Serve()
-		// 	alive[i] = true
-		// } else {
-		// 	//storage[i] = NewMapStorage()
-		// 	commitChans[i] = make(chan CommitEntry)
-		// 	ns[i] = NewBrokerServer(i, peerIds, Follower, ready /*,commitChans[i]*/)
-		// 	ns[i].Serve()
-		// 	alive[i] = true
-		// }
 
 		commitChans[i] = make(chan CommitEntry)
 		ns[i] = NewBrokerServer(i, peerIds, peerAddrs, peerAddrs[i], Follower, ready, commitChans[i])
@@ -154,14 +138,12 @@ func (h *Harness) ReconnectPeer(id int) {
 }
 
 // simulates crash by disconnecting and shutting down server
-// the same server is not reconnected so will need storage to simulate reconnection
-// want to avoid shutdown
+// the same server is not reconnected so will have empty logs
 func (h *Harness) CrashPeer(id int) {
 	tlog("Crash %d", id)
 	h.DisconnectPeer(id)
 	h.alive[id] = false
-	h.cluster[id].Shutdown() // don't want to shut down cuz can't simulate re-up without storage
-	// alteratively assume data is wiped so followers coming back online will need to recollect entire log
+	h.cluster[id].Shutdown()
 
 	h.mu.Lock()
 	h.commits[id] = h.commits[id][:0]
@@ -191,21 +173,6 @@ func (h *Harness) RestartPeer(id int) {
 
 }
 
-// DONT WANT TO USE
-// // PeerDropCallsAfterN instructs peer `id` to drop calls after the next `n`
-// // are made.
-// func (h *Harness) PeerDropCallsAfterN(id int, n int) {
-// 	tlog("peer %d drop calls after %d", id, n)
-// 	h.cluster[id].Proxy().DropCallsAfterN(n)
-// }
-
-// // PeerDontDropCalls instructs peer `id` to stop dropping calls.
-// func (h *Harness) PeerDontDropCalls(id int) {
-// 	tlog("peer %d don't drop calls")
-// 	h.cluster[id].Proxy().DontDropCalls()
-// }
-
-// feels convoluted. see if i can just iterate through nodes and check if 1 leader
 func (h *Harness) CheckSingleLeader() (int, int) {
 	retries := 10
 	for r := 0; r < retries; r++ {
@@ -341,33 +308,6 @@ func (h *Harness) CheckCommitted(cmd int) (nc int, index int) {
 	h.t.Errorf("cmd=%d not found in commits", cmd)
 	log.Printf("commits: %+v", h.commits)
 	return -1, -1
-}
-
-// check if exactly n servers committed
-func (h *Harness) CheckCommittedN(cmd int, n int) {
-	h.t.Helper()
-	nc, _ := h.CheckCommitted(cmd)
-	if nc != n {
-		h.t.Errorf("CheckCommittedN got nc=%d, want %d", nc, n)
-	}
-}
-
-// check that input command has not been commited in any server
-func (h *Harness) CheckNotCommitted(cmd int) {
-	h.t.Helper()
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	for i := 0; i < h.n; i++ {
-		if h.connected[i] {
-			for c := 0; c < len(h.commits[i]); c++ {
-				gotCmd := h.commits[i][c].CRDTOperation.(int)
-				if gotCmd == cmd {
-					h.t.Errorf("found %d at commits[%d][%d], expected none", cmd, i, c)
-				}
-			}
-		}
-	}
 }
 
 func (h *Harness) SubmitToServer(serverId int, document string, cmd any) int {

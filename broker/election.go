@@ -1,26 +1,12 @@
 package broker
 
-// move all election shit here later? idk
-// basically all it is is the leader sends heartbeats to followers.
-// if a follower doesn't detect a heartbeat by timeout, start leader election
-
-// assumed to rely on a ReplicationModule (rm). can get log idx through something like  len(broker.rm.log)
-
 import (
-	//"fmt"
 	"log"
 	"math/rand"
-
-	//"sync"
 	"time"
 )
 
-// maybe move serverstate to broker_server.go idk
-
 type ElectionModule struct {
-	// lock
-	//mu sync.Mutex // probably retire for the shared lock in brokerserver
-
 	broker *BrokerServer
 
 	// id of connected server
@@ -40,8 +26,9 @@ type ElectionModule struct {
 	nextIndex  map[int]int
 	matchIndex map[int]int
 
-	//electionResetEvent time.Time
-
+	//////////////////////////////////////////////////
+	// below didn't end up being implemented in time
+	//////////////////////////////////////////////////
 	// in the case a follower receives an http request
 	// each broker keeps track of who the leader is and a list of peer addresses
 	// so the follower can send an http reply back with the leader's address
@@ -67,56 +54,16 @@ func NewEM(id int, peerIds []int, peerAddrs map[int]string, broker *BrokerServer
 	// start election timeouts together
 	go func() {
 		<-ready
-		//em.broker.mu2.Lock()
-		//em.electionResetEvent = time.Now()
-		//em.resetElectionTimer()
-		//em.broker.mu2.Unlock()
 		em.resetElectionTimer()
 	}()
 
 	return em
 }
 
-// redo timer according to github
-// ////////////////////////////////////////////
-// func (em *ElectionModule) resetElectionTimer() {
-// 	timeout := time.Duration(1000+rand.Intn(150)) * time.Millisecond
-// 	em.broker.mu2.Lock()
-// 	termStarted := em.term // for logging
-// 	em.broker.mu2.Unlock()
-// 	log.Printf("%d resets election timer", em.id)
-
-// 	ticker := time.NewTicker(10 * time.Millisecond)
-// 	defer ticker.Stop()
-// 	for {
-// 		<-ticker.C
-
-// 		em.broker.mu2.Lock()
-// 		if em.broker.state != Candidate && em.broker.state != Follower {
-// 			em.broker.mu2.Unlock()
-// 			return
-// 		}
-
-// 		if termStarted != em.term {
-// 			em.broker.mu2.Unlock()
-// 			return
-// 		}
-
-// 		if elapsed := time.Since(em.electionResetEvent); elapsed >= timeout {
-// 			em.startElection()
-// 			em.broker.mu2.Unlock()
-// 			return
-// 		}
-// 		em.broker.mu2.Unlock()
-// 	}
-// }
-
-///////////////////////////////////////////////
-
 func (em *ElectionModule) resetElectionTimer() {
 
 	log.Printf("%d resets election timer", em.id)
-	// maybe check if leader here?
+
 	// stop timer if there is still time left
 	if em.electionTimer != nil {
 		em.electionTimer.Stop()
@@ -143,15 +90,11 @@ func (em *ElectionModule) startElection() {
 	em.broker.state = Candidate
 	em.term++
 
-	//em.resetElectionTimer()
-
 	em.votedFor = em.id
 
 	em.leaderId = -1
 
 	currentTerm := em.term
-
-	//em.electionResetEvent = time.Now()
 
 	log.Printf("%d voted for %d for term %d", em.id, em.votedFor, em.term)
 
@@ -161,9 +104,7 @@ func (em *ElectionModule) startElection() {
 	// send vote request rpc to all peers
 	for _, peerId := range em.peerIds {
 		go func(peerId int) {
-			// need log index so need logs to work first
-			// but something like
-			// lastlogindex, lastterm = lastLogIndexAndTerm()
+
 			em.broker.mu2.Lock()
 			lastLogIndex, lastLogTerm := em.lastLogIndexAndTerm()
 			em.broker.mu2.Unlock()
@@ -182,7 +123,7 @@ func (em *ElectionModule) startElection() {
 			if err := em.broker.Call(peerId, "ElectionModule.RequestVote", args, &reply); err == nil {
 				em.broker.mu2.Lock()
 				defer em.broker.mu2.Unlock()
-				log.Printf("%d received RequestVoteReply %+v", em.id, reply) // for some reason recieved reply is always false even though followers reply true
+				log.Printf("%d received RequestVoteReply %+v", em.id, reply)
 
 				// state no longer candidate during election
 				if em.broker.state != Candidate {
@@ -212,7 +153,6 @@ func (em *ElectionModule) startElection() {
 				log.Printf("error with requestvote call %s", err)
 			}
 
-			//return // why is this here
 		}(peerId)
 	}
 	log.Printf("%d's election fails", em.id)
@@ -229,7 +169,7 @@ func (em *ElectionModule) becomeFollower(term int) {
 	em.term = term
 	em.votedFor = -1
 	em.leaderId = -1
-	//em.electionResetEvent = time.Now()
+
 	go em.resetElectionTimer()
 
 }
@@ -298,7 +238,7 @@ func (em *ElectionModule) becomeLeader() {
 // RPC funcs
 // //////////////////////////////////////////////////
 
-// there is a naming convention. exported fields must be capitalized
+// there is a naming convention in Go. exported fields must be capitalized. fucking took me forever to realize
 type RequestVoteArgs struct {
 	Term        int
 	CandidateId int
@@ -333,7 +273,7 @@ func (em *ElectionModule) RequestVote(args RequestVoteArgs, reply *RequestVoteRe
 		em.becomeFollower(args.Term)
 	}
 
-	// if own term is equal, and em has not voted/already voted for requestor, and requetor logs are as
+	// if own term is equal, and em has not voted/already voted for requestor, and requestor logs are as
 	// up to date as own logs. grant vote
 	if em.term == args.Term && (em.votedFor == -1 || em.votedFor == args.CandidateId) &&
 		(args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex)) {
@@ -342,8 +282,8 @@ func (em *ElectionModule) RequestVote(args RequestVoteArgs, reply *RequestVoteRe
 		reply.VoteGranted = true
 		em.votedFor = args.CandidateId
 		em.leaderId = args.CandidateId
-		//em.electionResetEvent = time.Now()
-		//em.resetElectionTimer()
+
+		em.resetElectionTimer()
 	} else {
 		log.Printf("%d voteGranted = false for %d", em.id, args.CandidateId)
 		reply.VoteGranted = false
@@ -365,17 +305,6 @@ func (em *ElectionModule) lastLogIndexAndTerm() (int, int) {
 		return -1, -1
 	}
 }
-
-// get last log index and term from replication module for election
-// func (em *ElectionModule) lastLogIndexAndTerm() (int, int) {
-// 	if len(broker.rm.log) > 0 {
-// 		lastIndex := len(broker.rm.log) - 1
-// 		return lastIndex, broker.rm.log[lastIndex].Term
-// 	} else {
-// 		// new server, no log
-// 		return -1, -1
-// 	}
-// }
 
 func (em *ElectionModule) GetLeaderAddr() string {
 	em.broker.mu2.Lock()

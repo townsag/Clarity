@@ -13,12 +13,6 @@ import (
 	"sync"
 )
 
-// type LogEntry struct {
-// 	Index int
-// 	Edit  any
-// 	Term  int
-// }
-
 type ServerState int
 
 const (
@@ -46,7 +40,7 @@ func (s ServerState) String() string {
 type BrokerServer struct {
 	mu sync.Mutex
 
-	// lock for election and replication
+	// lock for election and replication modules
 	mu2 sync.Mutex
 
 	brokerid int
@@ -65,25 +59,22 @@ type BrokerServer struct {
 
 	commitChan chan<- CommitEntry
 
-	// rpc proxy used in github to simulate failures
-	//rpcProxy *RPCProxy
-
 	// rpc server for handling actual requests
 	rpcServer *rpc.Server
 
 	// channel to ensure servers start together
 	ready <-chan any
-	quit  chan any
-	wg    sync.WaitGroup
 
-	// for http
+	quit chan any
+	wg   sync.WaitGroup
+
+	// for http communication with Appliation server
 	httpServer *http.Server
 	httpAddr   string
 	peerAddrs  map[int]string
 }
 
-// i think we can just hardcode initialize one server as leader when we start up the cluster?
-// ready <-chan any is for make sure everything starts are the same time when close(ready) in whatever starting the servers
+// ready <-chan any is for make sure everything starts are the same time when close(ready) when starting the servers
 func NewBrokerServer(brokerid int, peerIds []int, peerAddrs map[int]string, httpAddr string, state ServerState, ready <-chan any, commitChan chan<- CommitEntry) *BrokerServer {
 	broker := new(BrokerServer)
 	broker.brokerid = brokerid
@@ -134,9 +125,6 @@ func (broker *BrokerServer) handleCRDTOperation(w http.ResponseWriter, r *http.R
 
 	log.Printf("%s %d Received CRDT Message: %+v", broker.state, broker.brokerid, crdtMessage)
 
-	// broker.mu2.Lock()
-	// defer broker.mu2.Unlock()
-
 	// leader builds crdt operation log and submits to ReplicationModule for log replication and committing
 	crdtOp := fmt.Sprintf("Type[%s] Index[%d] Value[%+v]", crdtMessage.Type, crdtMessage.Index, crdtMessage.Value)
 	documentName := fmt.Sprintf("%d", crdtMessage.OpIndex)
@@ -150,7 +138,7 @@ func (broker *BrokerServer) handleCRDTOperation(w http.ResponseWriter, r *http.R
 	w.Write([]byte("CRDT operation accepted"))
 }
 
-// http func to send logs
+// http func to send logs back to app server
 func (broker *BrokerServer) handleLogGetRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -197,6 +185,7 @@ func (broker *BrokerServer) Serve() {
 	broker.rpcServer.RegisterName("ElectionModule", broker.em)
 	broker.rpcServer.RegisterName("ReplicationModule", broker.rm)
 
+	// for internal broker rpc server
 	var err error
 	broker.listener, err = net.Listen("tcp", ":0") // listen on any open port
 	if err != nil {
@@ -206,7 +195,7 @@ func (broker *BrokerServer) Serve() {
 
 	broker.mu.Unlock()
 
-	// initialize and start http server to receive crdts from application server
+	// initialize and start http server for comms with application server
 	mux := http.NewServeMux()
 
 	// func for handling incoming crdt Messages from application server
@@ -224,6 +213,7 @@ func (broker *BrokerServer) Serve() {
 
 	broker.wg.Add(1)
 
+	// start listening for requests from application server
 	go func() {
 		defer broker.wg.Done()
 		if err := broker.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -258,7 +248,6 @@ func (broker *BrokerServer) Serve() {
 		}
 	}()
 
-	// if follower gets a log update. reject? then app server should resend to leader
 }
 
 func (broker *BrokerServer) Call(id int, serviceMethod string, args any, reply any) error {
@@ -273,11 +262,6 @@ func (broker *BrokerServer) Call(id int, serviceMethod string, args any, reply a
 		return peer.Call(serviceMethod, args, reply)
 	}
 
-	// if err := peer.Call(serviceMethod, args, reply); err != nil {
-	// 	// Optionally, try reconnecting or handle error more gracefully
-	// 	return fmt.Errorf("failed to call peer %d: %v", id, err)
-	// }
-	// return nil
 }
 
 ////////////////////////////////////////////////////////////////////
@@ -341,6 +325,10 @@ func (broker *BrokerServer) Shutdown() {
 
 	broker.wg.Wait()
 }
+
+//////////////////////////////////////////////////
+// funcs to expose broker rpc and http addresses
+//////////////////////////////////////////////////
 
 func (broker *BrokerServer) GetListenAddr() net.Addr {
 	broker.mu.Lock()

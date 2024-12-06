@@ -1,38 +1,24 @@
-// this is before implementing log of logs  and commitlog of commitlogs
-
 package broker
 
 import (
 	"log"
 )
 
-// basically if leader. rpc new log entries to followers and wait for responses the send commit
-// if follower when getting an update, send ready message then wait for commit message
-
-//"sync"
-
 type CommitEntry struct {
 	CRDTOperation any
-	//CRDTOperation int
 
 	Index int
 
 	Term int
-
-	//Document string
 }
 
 type LogEntry struct {
-	// crdtOperation int
-
 	CRDTOperation any
 	Term          int
 	Document      string
 }
 
 type ReplicationModule struct {
-	//mu sync.Mutex	// probably retire for the shared lock in brokerserver
-
 	broker *BrokerServer
 
 	// id of connected server
@@ -158,25 +144,12 @@ func (rm *ReplicationModule) leaderSendAEs() {
 										matches++
 									}
 								}
-								// currently set to atomic. raft does majority
+								// currently set to atomic. real raft does majority
 								// if matches*2 > len(rm.peerIds)+1
-
 								if matches == len(rm.peerIds) {
 									log.Printf("all followers ready to commit, %s %d updates commitIndex to %d", rm.broker.state, rm.id, i)
 
-									//leader has ensured that followers can commit
-									//leader also commits
-									// for j := savedCommitIndex + 1; j <= rm.commitIndex; j++ {
-									// 	rm.committedLog = append(rm.committedLog, rm.log[j])
-									// 	// rm.commitChan <- CommitEntry{
-									// 	// 	CRDTOperation: rm.log[j].CRDTOperation,
-									// 	// 	Index:         j,
-									// 	// 	Term:          rm.log[j].Term,
-									// 	// }
-									// }
-
 									rm.commitIndex = i
-
 								}
 							}
 
@@ -238,7 +211,7 @@ func (rm *ReplicationModule) commitChanSender() {
 		if rm.commitIndex == 0 {
 			entries = rm.log[rm.lastApplied : rm.commitIndex+1]
 			rm.lastApplied = rm.commitIndex
-		} else if rm.commitIndex > rm.lastApplied { // standard for subsequent commits
+		} else if rm.commitIndex > rm.lastApplied { // standard case for subsequent commits
 			entries = rm.log[rm.lastApplied+1 : rm.commitIndex+1]
 			rm.lastApplied = rm.commitIndex
 		}
@@ -279,7 +252,6 @@ type AppendEntriesReply struct {
 	Success bool
 	Id      int
 
-	// idk if these are necessary so remove if unused
 	ConflictIndex int
 	ConflictTerm  int
 }
@@ -302,7 +274,7 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 			rm.broker.em.becomeFollower(args.Term)
 		}
 		log.Printf("%s %d detects heartbeat or command from leaderid %d", rm.broker.state, rm.id, args.LeaderId)
-		//rm.broker.em.electionResetEvent = time.Now()
+
 		rm.broker.em.resetElectionTimer()
 
 		// check if follower log contains previous entry (correct term and index)
@@ -336,19 +308,11 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 			}
 			log.Printf("args.LeaderCommit > rm.commitIndex is %t", args.LeaderCommit > rm.commitIndex)
 			log.Printf("args.LeaderCommit: %d    rm.commitIndex: %d", args.LeaderCommit, rm.commitIndex)
-			// below is evaluating to false
+
 			if args.LeaderCommit > rm.commitIndex {
 				// follower updates own commitindex here
 				rm.commitIndex = min(args.LeaderCommit, len(rm.log)-1)
 				log.Printf("%s %d updates commitIndex to %d", rm.broker.state, rm.id, rm.commitIndex)
-
-				// update committedLog with committed entries
-				// log.Printf("LastApplied = %d   commitIndex = %d", rm.lastApplied, rm.commitIndex)
-				// for i := rm.lastApplied; i <= rm.commitIndex; i++ {
-				// 	log.Printf("%s %d adds %+v to committedLog", rm.broker.state, rm.id, rm.log[i])
-				// 	rm.committedLog = append(rm.committedLog, rm.log[i])
-				// }
-				// rm.lastApplied = rm.commitIndex
 
 				rm.newCommitReadyChan <- struct{}{}
 			}
@@ -375,8 +339,7 @@ func (rm *ReplicationModule) AppendEntries(args AppendEntriesArgs, reply *Append
 
 	reply.Term = rm.broker.em.term
 	reply.Id = rm.id
-	// storage is for crashes. we will probably pull from db if we end up having enough time.
-	//rm.persistToStorage()
+
 	return nil
 }
 
@@ -390,7 +353,6 @@ func (rm *ReplicationModule) Submit(document string, command any) int {
 	if rm.broker.state == Leader {
 		submitIndex := len(rm.log)
 		rm.log = append(rm.log, LogEntry{CRDTOperation: command, Term: rm.broker.em.term, Document: document})
-		//rm.persistToStorage()
 
 		rm.broker.mu2.Unlock()
 		rm.triggerAEChan <- struct{}{}
