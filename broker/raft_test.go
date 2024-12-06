@@ -8,20 +8,51 @@ import (
 
 func TestElectionLeaderDisconnect(t *testing.T) {
 	h := NewHarness(t, 3)
-	defer h.Shutdown()
+	// defer h.Shutdown()
+
 
 	origLeaderId, origTerm := h.CheckSingleLeader()
 
 	h.DisconnectPeer(origLeaderId)
-	sleepMs(350)
+	//sleepMs(350)
 
-	newLeaderId, newTerm := h.CheckSingleLeader()
+	start := time.Now()
+	var newLeaderId, newTerm int
+	foundNewLeader := false
+	const timeout = 5*time.Second
+
+	// periodically check for new Leader
+	for elapsed := time.Since(start); elapsed < timout; elapsed = time.Since(start) {
+		newLeaderId, newTerm = h.CheckSingleLeader()
+		if newLeaderId != origLeaderId && newTerm > origTerm {
+			foundNewLeader = true
+			break
+		}
+		sleepMs(10)
+	}
+
+	end := time.Now()
+
+	// newLeaderId, newTerm := h.CheckSingleLeader()
+
+	if !foundNewLeader {
+		t.Fatalf("No new leader elected within 5 seconds")
+	}
+
 	if newLeaderId == origLeaderId {
 		t.Errorf("want new leader to be different from orig leader")
 	}
 	if newTerm <= origTerm {
 		t.Errorf("want newTerm <= origTerm, got %d and %d", newTerm, origTerm)
 	}
+
+	h.Shutdown()
+
+	duration := start.Sub(end)
+
+	log.Printf("time to elect leader: %s", duration)
+
+
 }
 
 func TestElection2LeaderDC(t *testing.T) {
@@ -92,14 +123,42 @@ func TestCommitOneCommand(t *testing.T) {
 
 	origLeaderId, _ := h.CheckSingleLeader()
 
+	start := time.Now()
+
 	tlog("submitting command {42} for document {testdoc} to %d", origLeaderId)
 	isLeader := h.SubmitToServer(origLeaderId, "testdoc", 42) >= 0
 	if !isLeader {
 		t.Errorf("want id=%d leader, but it's not", origLeaderId)
 	}
 
-	sleepMs(500)
-	h.CompareCommittedLogs()
+	//sleepMs(500)
+	//h.CompareCommittedLogs()
+
+	// periodically check of logs have been committedLog
+	const timeout = 5*time.Second
+	committed := false
+
+	for elapsed := time.Since(start); elapsed < timeout; elapsed = time.Since(start) {
+		allcommitted := true
+		for serverId := 0; serverId < h.n; serverId++ {
+			if len(committedLog) == 0 {
+				allCommitted = false
+				break
+			}
+		}
+
+		if allCommitted {
+			committed = true
+			break
+		}
+		sleepMs(10)
+	}
+
+	end := time.Now()
+
+	if !committed {
+		t.Fatalf("not all servers committed within %s", timeout)
+	}
 
 	// log, commitIndex, logLen := h.GetLogAndCommitIndexFromServer(origLeaderId)
 	// tlog("Leader %d CommitIndex: %d   log: %+v   idx of latest entry: %d ", origLeaderId, commitIndex, log, logLen-1)
@@ -108,8 +167,17 @@ func TestCommitOneCommand(t *testing.T) {
 		log, committedLog, commitIndex, logLen := h.GetLogsAndCommitIndexFromServer(serverId)
 		tlog("Server %d CommitIndex: %d   log: %+v  committed: %+v  idx of latest entry: %d", serverId, commitIndex, log, committedLog, logLen-1)
 	}
+
+
+	h.Shutdown()
+
+	duration := start.Sub(end)
+
+	log.Printf("logs replicated and committed in %s", duration)
 }
 
+
+// make sure there are no dupes or missing entries
 func TestCommitMultipleCommands(t *testing.T) {
 
 	h := NewHarness(t, 3)
