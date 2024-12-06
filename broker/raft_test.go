@@ -31,7 +31,7 @@ func TestElectionLeaderDisconnect3brokers(t *testing.T) {
 			foundNewLeader = true
 			break
 		}
-		sleepMs(1)
+		sleepMs(10)
 	}
 
 	end := time.Now()
@@ -84,7 +84,7 @@ func TestElectionLeaderDisconnect4brokers(t *testing.T) {
 			foundNewLeader = true
 			break
 		}
-		sleepMs(1)
+		sleepMs(10)
 	}
 
 	end := time.Now()
@@ -137,7 +137,7 @@ func TestElectionLeaderDisconnect7brokers(t *testing.T) {
 			foundNewLeader = true
 			break
 		}
-		sleepMs(1)
+		sleepMs(10)
 	}
 
 	end := time.Now()
@@ -190,7 +190,7 @@ func TestElectionLeaderDisconnect20brokers(t *testing.T) {
 			foundNewLeader = true
 			break
 		}
-		sleepMs(1)
+		sleepMs(10)
 	}
 
 	end := time.Now()
@@ -312,7 +312,7 @@ func TestCommitOneCommand(t *testing.T) {
 			committed = true
 			break
 		}
-		sleepMs(1)
+		sleepMs(10)
 	}
 
 	end := time.Now()
@@ -357,7 +357,7 @@ func TestCommitMultipleCommands(t *testing.T) {
 		if !isLeader {
 			t.Errorf("want id=%d leader, but it's not", origLeaderId)
 		}
-		//sleepMs(100)
+		sleepMs(100)
 	}
 
 	// periodically check of logs have been committedLog
@@ -378,7 +378,7 @@ func TestCommitMultipleCommands(t *testing.T) {
 			committed = true
 			break
 		}
-		sleepMs(1)
+		sleepMs(10)
 	}
 
 	end := time.Now()
@@ -426,7 +426,7 @@ func TestCommitEvenMoreCommands(t *testing.T) {
 		if !isLeader {
 			t.Errorf("want id=%d leader, but it's not", origLeaderId)
 		}
-		//sleepMs(100)
+		sleepMs(100)
 	}
 
 	// periodically check of logs have been committedLog
@@ -447,7 +447,7 @@ func TestCommitEvenMoreCommands(t *testing.T) {
 			committed = true
 			break
 		}
-		sleepMs(1)
+		sleepMs(10)
 	}
 
 	end := time.Now()
@@ -517,7 +517,7 @@ func TestFollowerCrashAndRecover(t *testing.T) {
 			committed = true
 			break
 		}
-		sleepMs(1)
+		sleepMs(10)
 	}
 
 	//endFirstCommits := time.Now()
