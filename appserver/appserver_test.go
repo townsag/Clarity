@@ -274,7 +274,7 @@ func TestHandleSendAndGet7brokers(t *testing.T) {
 	roundtripDuration := requestLogFromBrokerEnd.Sub(sendMessageToBrokerStart)
 
 	log.Printf("\n\n\n\n")
-	log.Printf("[TestHandleSendAndGet3brokers] metrics:")
+	log.Printf("[TestHandleSendAndGet7brokers] metrics:")
 	log.Printf("Test took %s", testDuration)
 	log.Printf("cluster creation took: %s", createClusterDuration)
 	log.Printf("appserver send message to broker took: %s", sendMessageToBrokerDuration)
@@ -365,7 +365,7 @@ func TestHandleSendAndGet20brokers(t *testing.T) {
 	roundtripDuration := requestLogFromBrokerEnd.Sub(sendMessageToBrokerStart)
 
 	log.Printf("\n\n\n\n")
-	log.Printf("[TestHandleSendAndGet3brokers] metrics:")
+	log.Printf("[TestHandleSendAndGet20brokers] metrics:")
 	log.Printf("Test took %s", testDuration)
 	log.Printf("cluster creation took: %s", createClusterDuration)
 	log.Printf("appserver send message to broker took: %s", sendMessageToBrokerDuration)

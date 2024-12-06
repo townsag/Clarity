@@ -31,7 +31,7 @@ func TestElectionLeaderDisconnect3brokers(t *testing.T) {
 			foundNewLeader = true
 			break
 		}
-		sleepMs(10)
+		sleepMs(1)
 	}
 
 	end := time.Now()
@@ -84,7 +84,7 @@ func TestElectionLeaderDisconnect4brokers(t *testing.T) {
 			foundNewLeader = true
 			break
 		}
-		sleepMs(10)
+		sleepMs(1)
 	}
 
 	end := time.Now()
@@ -137,7 +137,7 @@ func TestElectionLeaderDisconnect7brokers(t *testing.T) {
 			foundNewLeader = true
 			break
 		}
-		sleepMs(10)
+		sleepMs(1)
 	}
 
 	end := time.Now()
@@ -190,7 +190,7 @@ func TestElectionLeaderDisconnect20brokers(t *testing.T) {
 			foundNewLeader = true
 			break
 		}
-		sleepMs(10)
+		sleepMs(1)
 	}
 
 	end := time.Now()
@@ -312,7 +312,7 @@ func TestCommitOneCommand(t *testing.T) {
 			committed = true
 			break
 		}
-		sleepMs(10)
+		sleepMs(1)
 	}
 
 	end := time.Now()
@@ -378,7 +378,7 @@ func TestCommitMultipleCommands(t *testing.T) {
 			committed = true
 			break
 		}
-		sleepMs(10)
+		sleepMs(1)
 	}
 
 	end := time.Now()
@@ -447,7 +447,7 @@ func TestCommitEvenMoreCommands(t *testing.T) {
 			committed = true
 			break
 		}
-		sleepMs(10)
+		sleepMs(1)
 	}
 
 	end := time.Now()
@@ -517,7 +517,7 @@ func TestFollowerCrashAndRecover(t *testing.T) {
 			committed = true
 			break
 		}
-		sleepMs(10)
+		sleepMs(1)
 	}
 
 	//endFirstCommits := time.Now()
