@@ -123,7 +123,8 @@ func (em *ElectionModule) resetElectionTimer() {
 	}
 
 	// set and start new timer
-	timeout := time.Duration(500+rand.Intn(150)) * time.Millisecond
+	//timeout := time.Duration(500+rand.Intn(150)) * time.Millisecond
+	timeout := time.Duration(150+rand.Intn(150)) * time.Millisecond
 	em.electionTimer = time.NewTimer(timeout)
 
 	// start election when timer runs out
@@ -290,7 +291,7 @@ func (em *ElectionModule) becomeLeader() {
 				em.broker.rm.leaderSendAEs()
 			}
 		}
-	}(50 * time.Millisecond)
+	}(25 * time.Millisecond)
 }
 
 // //////////////////////////////////////////////////
