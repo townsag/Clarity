@@ -176,6 +176,8 @@ func TestCommitOneCommand(t *testing.T) {
 	log.Printf("logs replicated and committed in %s", duration)
 }
 
+
+// make sure there are no dupes or missing entries
 func TestCommitMultipleCommands(t *testing.T) {
 
 	h := NewHarness(t, 3)
