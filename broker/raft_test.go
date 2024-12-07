@@ -218,25 +218,25 @@ func TestElectionLeaderDisconnect20brokers(t *testing.T) {
 
 }
 
-// func TestElection2LeaderDC(t *testing.T) {
-// 	h := NewHarness(t, 3)
-// 	defer h.Shutdown()
+func TestElection2LeaderDC(t *testing.T) {
+	h := NewHarness(t, 3)
+	defer h.Shutdown()
 
-// 	origLeaderId, _ := h.CheckSingleLeader()
-// 	log.Printf("leader is %d", origLeaderId)
+	origLeaderId, _ := h.CheckSingleLeader()
+	log.Printf("leader is %d", origLeaderId)
 
-// 	h.DisconnectPeer(origLeaderId)
-// 	otherId := (origLeaderId + 1) % 3
-// 	h.DisconnectPeer(otherId)
+	h.DisconnectPeer(origLeaderId)
+	otherId := (origLeaderId + 1) % 3
+	h.DisconnectPeer(otherId)
 
-// 	// No quorum.
-// 	sleepMs(450)
-// 	h.CheckNoLeader()
+	// No quorum.
+	sleepMs(450)
+	h.CheckNoLeader()
 
-// 	// Reconnect one other server; now we'll have quorum.
-// 	h.ReconnectPeer(otherId)
-// 	h.CheckSingleLeader()
-// }
+	// Reconnect one other server; now we'll have quorum.
+	h.ReconnectPeer(otherId)
+	h.CheckSingleLeader()
+}
 
 // func TestDisconnectAllThenRestore(t *testing.T) {
 // 	h := NewHarness(t, 3)
@@ -352,7 +352,7 @@ func TestCommitMultipleCommands(t *testing.T) {
 	values := []int{1, 2, 3}
 	docnames := []string{"doc1", "doc1", "doc2"}
 	for i, v := range values {
-		tlog("submitting {%d} for %d to %d", v, docnames[i], origLeaderId)
+		tlog("submitting {%d} for %s to %d", v, docnames[i], origLeaderId)
 		isLeader := h.SubmitToServer(origLeaderId, docnames[i], v) >= 0
 		if !isLeader {
 			t.Errorf("want id=%d leader, but it's not", origLeaderId)
@@ -398,7 +398,7 @@ func TestCommitMultipleCommands(t *testing.T) {
 	tlog("Leader is %d", origLeaderId)
 	for serverId := 0; serverId < h.n; serverId++ {
 		log, committedLog, commitIndex, logLen := h.GetLogsAndCommitIndexFromServer(serverId)
-		tlog("Server %d CommitIndex: %d   log: %+v  committed: %+v  idx of latest entry: %d", serverId, commitIndex, log, committedLog, logLen-1)
+		tlog("Server %d CommitIndex: %d   log: %+v \n committed: %+v  idx of latest entry: %d", serverId, commitIndex, log, committedLog, logLen-1)
 	}
 
 	h.Shutdown()
@@ -490,7 +490,7 @@ func TestFollowerCrashAndRecover(t *testing.T) {
 	docnames := []string{"doc1", "doc1", "doc2"}
 
 	for i, v := range values {
-		tlog("submitting {%d} for %d to %d", v, docnames[i], origLeaderId)
+		tlog("submitting {%d} for %s to %d", v, docnames[i], origLeaderId)
 		isLeader := h.SubmitToServer(origLeaderId, docnames[i], v) >= 0
 		if !isLeader {
 			t.Errorf("want id=%d leader, but it's not", origLeaderId)

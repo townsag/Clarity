@@ -1,0 +1,8 @@
+This document outlines how to run the tests included in our project
+
+this project is written in go so you will need to have go installed
+1. go to the official go website: https://go.dev/doc/install
+2. once go is installed navigate to the directory where the go _test.go files are
+3. in order to run the test you can use the command: 'go test -v -run TESTNAME' to run a specific test with all the terminal prints
+4. alternatively you can use the command: 'go test -v -run ../. to run all the tests at once. keep in mind that if you are running in
+   an IDE's terminal, logs could be truncated

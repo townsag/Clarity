@@ -123,7 +123,7 @@ func (h *Harness) DisconnectPeer(id int) {
 }
 
 func (h *Harness) ReconnectPeer(id int) {
-	tlog("Reconnect d", id)
+	tlog("Reconnect %d", id)
 	for j := 0; j < h.n; j++ {
 		if j != id && h.alive[j] {
 			if err := h.cluster[id].ConnectToPeer(j, h.cluster[j].GetListenAddr()); err != nil {
